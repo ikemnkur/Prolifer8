@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Save, Tag, UserRoundIcon, X } from 'lucide-react';
+import { ArrowLeft, Save, Tag, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { mapDrop, type ServerPost } from '../hooks/useData';
 import type { Post } from '../types';
