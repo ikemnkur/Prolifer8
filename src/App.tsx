@@ -1,0 +1,102 @@
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { AuthProvider } from './context/AuthContext';
+import { AppProvider } from './context/AppContext';
+import Layout from './components/Layout';
+import ProtectedRoute from './components/ProtectedRoute';
+import GuestRoute from './components/GuestRoute';
+import Landing from './pages/Landing';
+import Dashboard from './pages/Dashboard';
+import Posts from './pages/Posts';
+import PostReview from './pages/PostReview';
+// import ActiveContributions from './pages/ActiveContributions';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import Account from './pages/Account';
+import BuyCredits from './pages/BuyCredits';
+import BuyStripe from './pages/BuyStripe';
+import BuyCrypto from './pages/BuyCrypto';
+import Redeem from './pages/Redeem';
+import Help from './pages/Help';
+import History from './pages/History';
+import UserProfile from './pages/UserProfile';
+import CreateDrop from './pages/CreatePost';
+import EditDrop from './pages/EditPost';
+import Boost from './pages/Boost';
+import Explore from './pages/Explore';
+import Verification from './pages/Verification';
+import Plans from './pages/Plans';
+import EditProfile from './pages/EditProfile';
+import SubscriptionCallback from './pages/SubscriptionCallback';
+import AdminPortal from './pages/AdminPortal';
+import ForgotPassword from './pages/ForgotPasswordPage';
+import ResetPassword from './pages/ResetPasswordPage';
+import AdsPromo from './pages/AdsPromo';
+import Notifications from './pages/Notifications';
+import PromoCreateAd from './pages/PromoCreateAd';
+import PromoSponsorDrop from './pages/PromoSponsorPost';
+import Demo from './pages/Demo';
+import PostPublicView from './pages/PostPublicView';
+import PostPublicInfo from './pages/PostPublicInfo';
+import PostAuthRoute from './components/PostAuthRoute';
+// import PostAuthRoute from './components/PostAuthRoute';
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppProvider>
+        <BrowserRouter>
+          <Routes>
+            {/* Pre-auth landing */}
+            <Route path="/" element={<Landing />} />
+
+            {/* Hidden admin portal — secret route */}
+            <Route path="/sys-ctrl-9x" element={<AdminPortal />} />
+
+            {/* Auth pages (redirect away if already logged in) */}
+            <Route element={<Layout />}>
+              <Route path="/login" element={<GuestRoute><Login /></GuestRoute>} />
+              <Route path="/register" element={<GuestRoute><Register /></GuestRoute>} />
+
+              {/* Public pages inside layout */}
+              <Route path="/explore" element={<Explore />} />
+              <Route path="/post/:id" element={<PostAuthRoute publicSuffix="/info"><Posts /></PostAuthRoute>} />
+              <Route path="/user/:identifier" element={<UserProfile />} />
+              <Route path="/help" element={<Help />} />
+              <Route path="/demo" element={<Demo />} />
+              <Route path="/post/:id/view" element={<PostPublicView />} />
+              <Route path="/post/:id/info" element={<PostPublicInfo />} />
+              {/* Password recovery + email verification */}
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
+              <Route path="/password-reset" element={<ResetPassword />} />
+              <Route path="/verify" element={<Verification />} />
+              <Route path="/verify-email" element={<Verification />} />
+
+
+              {/* Protected pages */}
+              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/post/:id/review" element={<ProtectedRoute><PostReview /></ProtectedRoute>} />
+              {/* <Route path="/contributions" element={<ProtectedRoute><ActiveContributions /></ProtectedRoute>} /> */}
+              <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
+              <Route path="/buy-credits" element={<ProtectedRoute><BuyCredits /></ProtectedRoute>} />
+              <Route path="/buy-credits/stripe" element={<ProtectedRoute><BuyStripe /></ProtectedRoute>} />
+              <Route path="/buy-credits/crypto" element={<ProtectedRoute><BuyCrypto /></ProtectedRoute>} />
+              <Route path="/redeem" element={<ProtectedRoute><Redeem /></ProtectedRoute>} />
+              <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
+              <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
+              <Route path="/promo" element={<ProtectedRoute><AdsPromo /></ProtectedRoute>} />
+              <Route path="/promo/create-ad" element={<ProtectedRoute><PromoCreateAd /></ProtectedRoute>} />
+              <Route path="/promo/sponsor-drop" element={<ProtectedRoute><PromoSponsorDrop /></ProtectedRoute>} />
+              <Route path="/create" element={<ProtectedRoute><CreateDrop /></ProtectedRoute>} />
+              <Route path="/post/:id/edit" element={<ProtectedRoute><EditDrop /></ProtectedRoute>} />
+              <Route path="/boost/:id" element={<ProtectedRoute><Boost /></ProtectedRoute>} />
+              <Route path="/plans" element={<ProtectedRoute><Plans /></ProtectedRoute>} />
+              <Route path="/subscription/stripe" element={<ProtectedRoute><SubscriptionCallback /></ProtectedRoute>} />
+              <Route path="/edit-profile" element={<ProtectedRoute><EditProfile /></ProtectedRoute>} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </AppProvider>
+    </AuthProvider>
+  );
+}

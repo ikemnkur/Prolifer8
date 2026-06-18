@@ -1,0 +1,648 @@
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { api } from '../lib/api';
+import { useAuth } from '../context/AuthContext';
+import type { Drop } from '../types';
+
+// ── Server → Frontend mappers ──────────────────────────────
+
+export interface ServerPost {
+  id: string;
+  creatorId: string;
+  title: string;
+  description: string;
+  trailerUrl?: string | null;
+  thumbnailUrl?: string | null;
+  fileType: Drop['fileType'];
+  fileSize: number | null;
+  filePath: string | null;
+  originalFileName: string | null;
+  mimeType: string | null;
+  tags: string | string[] | null;
+  scheduledDropTime?: string;
+  actualDropTime?: string | null;
+  expiresAt?: string;
+  goalAmount?: number;
+  currentContributions?: number;
+  contributorCount?: number;
+  momentum?: number;
+  burnRate?: number;
+  lastMomentumUpdate?: string | null;
+  sensitivity?: number;
+  decayConstant?: number;
+  basePrice?: number;
+  dailyPriceDecayPct?: number | string;
+  volumeDecayStep?: number;
+  volumeDecayPct?: number | string;
+  totalDownloads?: number;
+  totalRevenue?: number;
+  viewCount?: number;
+  views?: number;
+  avgRating: number | string | null;
+  reviewCount: number;
+  likeCount: number;
+  dislikeCount: number;
+  status: Drop['status'];  isPublic: number | boolean;
+  created_at: string;
+  updated_at?: string;
+  expiry_behaviour?: 'refund' | 'keep';
+  expiry_threshold?: number | null;
+  // Joined fields from /api/dashboard
+  creatorName?: string;
+  creatorAvatar?: string;
+  // From contributed query
+  myContribution?: number;
+  lastContributionTime?: string | null;
+}
+
+function safeParseTags(input: string | string[] | null): string[] {
+  if (Array.isArray(input)) return input;
+  if (typeof input !== 'string') return [];
+  try {
+    const parsed = JSON.parse(input);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return input
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
+  }
+}
+
+export function mapDrop(d: ServerPost): Drop & { myContribution?: number } {
+  const tags = safeParseTags(d.tags);
+  const createdAtMs = d.created_at ? new Date(d.created_at).getTime() : Date.now();
+  const scheduledMs = d.scheduledDropTime ? new Date(d.scheduledDropTime).getTime() : createdAtMs;
+  const expiresMs = d.expiresAt ? new Date(d.expiresAt).getTime() : createdAtMs + 7 * 24 * 60 * 60 * 1000;
+
+  return {
+    id: d.id,
+    title: d.title,
+    description: d.description || '',
+    creatorId: d.creatorId,
+    creatorName: d.creatorName || 'Unknown',
+    creatorAvatar: d.creatorAvatar || `https://i.pravatar.cc/150?u=${d.creatorId}`,
+    trailerUrl: d.trailerUrl || '',
+    thumbnailUrl: d.thumbnailUrl || '',
+    fileType: d.fileType,
+    fileSize: d.fileSize ? formatBytes(d.fileSize) : '0 B',
+    fileSizeBytes: d.fileSize ?? null,
+    filePath: d.filePath ?? null,
+    originalFileName: d.originalFileName ?? null,
+    mimeType: d.mimeType ?? null,
+    scheduledDropTime: scheduledMs,
+    actualDropTime: d.actualDropTime ? new Date(d.actualDropTime).getTime() : null,
+    createdAt: createdAtMs,
+    expiresAt: expiresMs,
+    goalAmount: d.goalAmount ?? 0,
+    currentContributions: d.currentContributions ?? 0,
+    contributorCount: d.contributorCount ?? 0,
+    momentum: d.momentum ?? 0,
+    burnRate: d.burnRate ?? 1,
+    lastMomentumUpdate: d.lastMomentumUpdate ?? null,
+    sensitivity: d.sensitivity ?? 5,
+    decayConstant: d.decayConstant ?? 0.0003,
+    basePrice: d.basePrice ?? 0,
+    dailyPriceDecayPct: Number(d.dailyPriceDecayPct ?? 5),
+    volumeDecayStep: d.volumeDecayStep ?? 1000,
+    volumeDecayPct: Number(d.volumeDecayPct ?? 5),
+    totalDownloads: d.totalDownloads ?? 0,
+    totalRevenue: d.totalRevenue ?? 0,
+    avgRating: d.avgRating != null ? Number(d.avgRating) : null,
+    reviewCount: d.reviewCount ?? 0,
+    likeCount: d.likeCount ?? 0,
+    dislikeCount: d.dislikeCount ?? 0,
+    views: d.views ?? d.viewCount ?? 0,
+    status: d.status,
+    isPublic: Boolean(d.isPublic),
+    tags,
+    myContribution: d.myContribution,
+    lastContributionTime: d.lastContributionTime ? new Date(d.lastContributionTime).getTime() : undefined,
+    expiryBehaviour: d.expiry_behaviour ?? 'refund',
+    expiryThreshold: d.expiry_threshold ?? null,
+  };
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+}
+
+// ── Dashboard hook ─────────────────────────────────────────
+
+export interface ProfileStats {
+  followers: number;
+  following: number;
+  views30d: number;
+  numPosts: number;
+  comments30d: number;
+  likes30d: number;
+  dislikes30d: number;
+  avgRating30d: number;
+}
+
+interface DashboardData {
+  myPosts: Drop[];
+  contributed: (Drop & { myContribution?: number })[];
+  profileStats: ProfileStats;
+}
+
+interface DashboardResponse {
+  user: { id: string; username: string; email: string; credits: number; profilePicture: string; accountType: string };
+  myPosts?: ServerPost[];
+  myDrops?: ServerPost[];
+  contributed?: ServerPost[];
+}
+
+export function useDashboard() {
+  const { isAuthenticated, updateBalance } = useAuth();
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  // Keep a stable ref to updateBalance so it doesn't need to be a useCallback dep
+  const updateBalanceRef = useRef(updateBalance);
+  useEffect(() => { updateBalanceRef.current = updateBalance; });
+
+  const fetch = useCallback(async () => {
+    if (!isAuthenticated) { setLoading(false); return; }
+    setLoading(true);
+    setError('');
+    try {
+      const res = await api.get<DashboardResponse>('/api/dashboard');
+
+      const myPostsRaw = res.myPosts || res.myDrops || [];
+      const myPosts = myPostsRaw.map(mapDrop);
+      const contributed = (res.contributed || []).map(mapDrop);
+
+      const now = Date.now();
+      const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+      const recentPosts = myPosts.filter((post) => post.createdAt >= thirtyDaysAgo);
+
+      const [followers, following] = await Promise.all([
+        api.get<Array<{ id: string }>>(`/api/users/${res.user.id}/followers`).catch(() => []),
+        api.get<Array<{ id: string }>>(`/api/users/${res.user.id}/following`).catch(() => []),
+      ]);
+
+      const ratingPosts = recentPosts.filter((post) => post.avgRating != null);
+      const avgRating30d = ratingPosts.length
+        ? ratingPosts.reduce((sum, post) => sum + Number(post.avgRating || 0), 0) / ratingPosts.length
+        : 0;
+
+      setData({
+        myPosts,
+        contributed,
+        profileStats: {
+          followers: followers.length,
+          following: following.length,
+          views30d: recentPosts.reduce((sum, post) => sum + Number((post as unknown as { viewCount?: number }).viewCount || 0), 0),
+          numPosts: myPosts.length,
+          comments30d: recentPosts.reduce((sum, post) => sum + post.reviewCount, 0),
+          likes30d: recentPosts.reduce((sum, post) => sum + post.likeCount, 0),
+          dislikes30d: recentPosts.reduce((sum, post) => sum + post.dislikeCount, 0),
+          avgRating30d: Number(avgRating30d.toFixed(1)),
+        },
+      });
+      // Sync credit balance from dashboard response without triggering a re-fetch loop
+      if (res.user?.credits != null) {
+        updateBalanceRef.current(res.user.credits);
+      }
+    } catch {
+      setError('Failed to load dashboard');
+    } finally {
+      setLoading(false);
+    }
+  }, [isAuthenticated]); // refreshUser intentionally excluded — would cause infinite loop
+
+  useEffect(() => { fetch(); }, [fetch]);
+
+  return { data, loading, error, refetch: fetch };
+}
+
+// ── Contribution history hook ──────────────────────────────
+
+export interface HistoryEntry {
+  id: string;
+  dropId: string;
+  dropTitle: string;
+  dropStatus: string;
+  amount: number;
+  penaltyAmount: number;
+  isRefunded: boolean;
+  timestamp: number;
+  kind: 'contribution' | 'stall';
+  stallMinutes?: number;
+}
+
+interface HistoryResponse {
+  history: {
+    id: string;
+    dropId: string;
+    amount: number;
+    penaltyAmount: number;
+    isRefunded: number;
+    created_at: string;
+    dropTitle: string;
+    dropStatus: string;
+  }[];
+  total: number;
+  totalSpent: number;
+}
+
+export function useContributionHistory() {
+  const { isAuthenticated } = useAuth();
+  const [entries, setEntries] = useState<HistoryEntry[]>([]);
+  const [totalSpent, setTotalSpent] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!isAuthenticated) { setLoading(false); return; }
+    let cancelled = false;
+
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await api.get<HistoryResponse>('/api/contributions/history');
+        if (cancelled) return;
+        setEntries(res.history.map(h => ({
+          id: h.id,
+          dropId: h.dropId,
+          dropTitle: h.dropTitle,
+          dropStatus: h.dropStatus,
+          amount: h.amount,
+          penaltyAmount: h.penaltyAmount,
+          isRefunded: !!h.isRefunded,
+          timestamp: new Date(h.created_at).getTime(),
+          kind: 'contribution' as const,
+        })));
+        setTotalSpent(res.totalSpent);
+      } catch {
+        if (!cancelled) setError('Failed to load history');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
+
+  return { entries, totalSpent, loading, error };
+}
+
+// ── Stall action history hook ──────────────────────────────
+
+interface StallHistoryResponse {
+  history: {
+    id: string;
+    dropId: string;
+    stallMinutes: number;
+    creditCost: number;
+    balanceAfter: number;
+    created_at: string;
+    dropTitle: string;
+    dropStatus: string;
+  }[];
+  total: number;
+}
+
+export function useStallHistory() {
+  const { isAuthenticated } = useAuth();
+  const [entries, setEntries] = useState<HistoryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!isAuthenticated) { setLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await api.get<StallHistoryResponse>('/api/stall-actions/history');
+        if (cancelled) return;
+        setEntries(res.history.map(h => ({
+          id: h.id,
+          dropId: h.dropId,
+          dropTitle: h.dropTitle,
+          dropStatus: h.dropStatus,
+          amount: h.creditCost,
+          penaltyAmount: 0,
+          isRefunded: false,
+          timestamp: new Date(h.created_at).getTime(),
+          kind: 'stall' as const,
+          stallMinutes: h.stallMinutes,
+        })));
+      } catch { /* table may not exist yet */ }
+      finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
+
+  return { entries, loading };
+}
+
+// ── Credit purchase history hook ───────────────────────────
+
+export interface PurchaseEntry {
+  id: string;
+  credits: number;
+  amountPaid: number;
+  currency: string;
+  paymentMethod: string;
+  status: string;
+  txHash: string | null;
+  timestamp: number;
+}
+
+interface PurchasesResponse {
+  purchases: {
+    id: string;
+    credits: number;
+    amountPaid: number;
+    currency: string;
+    paymentMethod: string;
+    status: string;
+    txHash: string | null;
+    created_at: string;
+  }[];
+}
+
+export function usePurchaseHistory() {
+  const { isAuthenticated } = useAuth();
+  const [entries, setEntries] = useState<PurchaseEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!isAuthenticated) { setLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await api.get<PurchasesResponse>('/api/history/purchases');
+        if (cancelled) return;
+        setEntries(res.purchases.map(p => ({
+          id: p.id,
+          credits: p.credits,
+          amountPaid: p.amountPaid,
+          currency: p.currency || 'USD',
+          paymentMethod: p.paymentMethod,
+          status: p.status,
+          txHash: p.txHash,
+          timestamp: new Date(p.created_at).getTime(),
+        })));
+      } catch {
+        if (!cancelled) setError('Failed to load purchase history');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
+
+  return { entries, loading, error };
+}
+
+// ── Download history hook ──────────────────────────────────
+
+export interface DownloadEntry {
+  id: string;
+  dropId: string;
+  dropTitle: string;
+  pricePaid: number;
+  basePrice: number;
+  contributorDiscount: number;
+  timeDecayDiscount: number;
+  volumeDecayDiscount: number;
+  downloadNumber: number;
+  timestamp: number;
+}
+
+interface DownloadsResponse {
+  downloads: {
+    id: string;
+    dropId: string;
+    dropTitle: string;
+    pricePaid: number;
+    basePrice: number;
+    contributorDiscount: number;
+    timeDecayDiscount: number;
+    volumeDecayDiscount: number;
+    downloadNumber: number;
+    created_at: string;
+  }[];
+}
+
+export function useDownloadHistory() {
+  const { isAuthenticated } = useAuth();
+  const [entries, setEntries] = useState<DownloadEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!isAuthenticated) { setLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await api.get<DownloadsResponse>('/api/history/downloads');
+        if (cancelled) return;
+        setEntries(res.downloads.map(d => ({
+          id: d.id,
+          dropId: d.dropId,
+          dropTitle: d.dropTitle,
+          pricePaid: d.pricePaid,
+          basePrice: d.basePrice,
+          contributorDiscount: d.contributorDiscount,
+          timeDecayDiscount: d.timeDecayDiscount,
+          volumeDecayDiscount: d.volumeDecayDiscount,
+          downloadNumber: d.downloadNumber,
+          timestamp: new Date(d.created_at).getTime(),
+        })));
+      } catch {
+        if (!cancelled) setError('Failed to load download history');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
+
+  return { entries, loading, error };
+}
+
+// ── Membership history hook ────────────────────────────────
+
+export interface MembershipEntry {
+  id: string;
+  plan: 'standard' | 'premium';
+  amount: number;
+  billingPeriod: string;
+  status: string;
+  timestamp: number;
+}
+
+interface MembershipsResponse {
+  memberships: {
+    id: string;
+    plan: 'standard' | 'premium';
+    amount: number;
+    billingPeriod: string;
+    status: string;
+    created_at: string;
+  }[];
+  activePlan: string | null;
+}
+
+export function useMembershipHistory() {
+  const { isAuthenticated } = useAuth();
+  const [entries, setEntries] = useState<MembershipEntry[]>([]);
+  const [activePlan, setActivePlan] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!isAuthenticated) { setLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await api.get<MembershipsResponse>('/api/history/memberships');
+        if (cancelled) return;
+        setEntries(res.memberships.map(m => ({
+          id: m.id,
+          plan: m.plan,
+          amount: m.amount,
+          billingPeriod: m.billingPeriod,
+          status: m.status,
+          timestamp: new Date(m.created_at).getTime(),
+        })));
+        setActivePlan(res.activePlan);
+      } catch {
+        if (!cancelled) setError('Failed to load membership history');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
+
+  return { entries, activePlan, loading, error };
+}
+
+// ── Earnings history hook ──────────────────────────────────
+
+export interface EarningsEntry {
+  id: string;
+  dropId: string | null;
+  dropTitle: string | null;
+  amount: number;
+  balanceAfter: number;
+  description: string | null;
+  timestamp: number;
+}
+
+interface EarningsResponse {
+  earnings: {
+    id: string;
+    relatedDropId: string | null;
+    dropTitle: string | null;
+    amount: number;
+    balanceAfter: number;
+    description: string | null;
+    created_at: string;
+  }[];
+  totalEarned: number;
+}
+
+export interface PromoChargeEntry {
+  id: string;
+  amount: number;
+  balanceAfter: number;
+  description: string | null;
+  timestamp: number;
+}
+
+interface PromoChargesResponse {
+  charges: {
+    id: string;
+    amount: number;
+    balanceAfter: number;
+    description: string | null;
+    created_at: string;
+  }[];
+  totalCharged: number;
+}
+
+export function useEarningsHistory() {
+  const { isAuthenticated } = useAuth();
+  const [entries, setEntries] = useState<EarningsEntry[]>([]);
+  const [totalEarned, setTotalEarned] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!isAuthenticated) { setLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await api.get<EarningsResponse>('/api/history/earnings');
+        if (cancelled) return;
+        setEntries(res.earnings.map(e => ({
+          id: e.id,
+          dropId: e.relatedDropId,
+          dropTitle: e.dropTitle || 'Unknown Drop',
+          amount: e.amount,
+          balanceAfter: e.balanceAfter,
+          description: e.description,
+          timestamp: new Date(e.created_at).getTime(),
+        })));
+        setTotalEarned(res.totalEarned);
+      } catch {
+        if (!cancelled) setError('Failed to load earnings history');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
+
+  return { entries, totalEarned, loading, error };
+}
+
+export function usePromoChargeHistory() {
+  const { isAuthenticated } = useAuth();
+  const [entries, setEntries] = useState<PromoChargeEntry[]>([]);
+  const [totalCharged, setTotalCharged] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!isAuthenticated) { setLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await api.get<PromoChargesResponse>('/api/history/promo-charges');
+        if (cancelled) return;
+        setEntries(res.charges.map(c => ({
+          id: c.id,
+          amount: c.amount,
+          balanceAfter: c.balanceAfter,
+          description: c.description,
+          timestamp: new Date(c.created_at).getTime(),
+        })));
+        setTotalCharged(res.totalCharged);
+      } catch {
+        if (!cancelled) setError('Failed to load promo charge history');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
+
+  return { entries, totalCharged, loading, error };
+}
