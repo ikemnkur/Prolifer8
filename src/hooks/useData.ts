@@ -15,6 +15,7 @@ export interface ServerPost {
   fileType: Drop['fileType'];
   fileSize: number | null;
   filePath: string | null;
+  link?: string | null;
   originalFileName: string | null;
   mimeType: string | null;
   tags: string | string[] | null;
@@ -37,11 +38,13 @@ export interface ServerPost {
   totalRevenue?: number;
   viewCount?: number;
   views?: number;
+  flagCount?: number;
   avgRating: number | string | null;
   reviewCount: number;
   likeCount: number;
   dislikeCount: number;
   status: Drop['status'];  isPublic: number | boolean;
+  mature?: number | boolean;
   created_at: string;
   updated_at?: string;
   expiry_behaviour?: 'refund' | 'keep';
@@ -87,6 +90,7 @@ export function mapDrop(d: ServerPost): Drop & { myContribution?: number } {
     fileSize: d.fileSize ? formatBytes(d.fileSize) : '0 B',
     fileSizeBytes: d.fileSize ?? null,
     filePath: d.filePath ?? null,
+    link: d.link ?? null,
     originalFileName: d.originalFileName ?? null,
     mimeType: d.mimeType ?? null,
     scheduledDropTime: scheduledMs,
@@ -112,8 +116,10 @@ export function mapDrop(d: ServerPost): Drop & { myContribution?: number } {
     likeCount: d.likeCount ?? 0,
     dislikeCount: d.dislikeCount ?? 0,
     views: d.views ?? d.viewCount ?? 0,
+    flagCount: Number(d.flagCount ?? 0),
     status: d.status,
     isPublic: Boolean(d.isPublic),
+    mature: Boolean(d.mature),
     tags,
     myContribution: d.myContribution,
     lastContributionTime: d.lastContributionTime ? new Date(d.lastContributionTime).getTime() : undefined,

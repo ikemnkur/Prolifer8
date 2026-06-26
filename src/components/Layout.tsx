@@ -292,7 +292,7 @@ export default function Layout() {
         onClick={() => setIsLayoutHeaderCollapsed((prev) => !prev)}
         aria-expanded={!isLayoutHeaderCollapsed}
         aria-label={isLayoutHeaderCollapsed ? 'Show layout header' : 'Hide layout header'}
-        className="fixed left-1/2 top-0 z-[120] flex h-7 w-16 -translate-x-1/2 items-center justify-center rounded-b-xl border border-white/20 bg-black/15 text-white/90 backdrop-blur-sm transition hover:bg-black/25"
+        className="fixed left-1/2 top-0 z-[120] flex h-4 w-16 -translate-x-1/2 items-center justify-center rounded-b-xl border border-white/20 bg-black/5 text-white/90 backdrop-blur-sm transition hover:bg-black/25"
       >
         {isLayoutHeaderCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
       </button>

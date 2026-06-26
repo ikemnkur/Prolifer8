@@ -7,10 +7,11 @@ export interface Drop {
   creatorAvatar: string;
   trailerUrl: string;
   thumbnailUrl: string;
-  fileType: 'game' | 'app' | 'document' | 'music' | 'video' | 'other';
+  fileType: 'game' | 'app' | 'document' | 'music' | 'video' | 'audio' | 'image' | 'picture' | 'link' | 'other';
   fileSize: string;             // human-readable, e.g. "12.4 MB"
   fileSizeBytes: number | null; // raw bytes from DB
   filePath: string | null;      // S3 key or local path
+  link?: string | null;
   originalFileName: string | null;
   mimeType: string | null;
   scheduledDropTime: number;    // unix ms
@@ -36,8 +37,10 @@ export interface Drop {
   likeCount: number;
   dislikeCount: number;
   views?: number;
+  flagCount?: number;
   status: 'draft' | 'pending' | 'active' | 'dropped' | 'expired' | 'removed' | 'hidden' | 'boosted';
   isPublic: boolean;
+  mature?: boolean;
   tags: string[];
   lastContributionTime?: number; // unix ms
   expiryBehaviour?: 'refund' | 'keep';
@@ -53,10 +56,11 @@ export interface Post {
   creatorAvatar: string;
   trailerUrl: string;
   thumbnailUrl: string;
-  fileType: 'game' | 'app' | 'document' | 'music' | 'video' | 'other';
+  fileType: 'game' | 'app' | 'document' | 'music' | 'video' | 'audio' | 'image' | 'picture' | 'link' | 'other';
   fileSize: string;             // human-readable, e.g. "12.4 MB"
   fileSizeBytes: number | null; // raw bytes from DB
   filePath: string | null;      // S3 key or local path
+  link?: string | null;
   originalFileName: string | null;
   mimeType: string | null;
   scheduledDropTime: number;    // unix ms
@@ -82,8 +86,10 @@ export interface Post {
   likeCount: number;
   dislikeCount: number;
   views?: number;
+  flagCount?: number;
   status: 'draft' | 'pending' | 'active' | 'dropped' | 'expired' | 'removed' | 'hidden' | 'boosted';
   isPublic: boolean;
+  mature?: boolean;
   tags: string[];
   lastContributionTime?: number; // unix ms
   expiryBehaviour?: 'refund' | 'keep';

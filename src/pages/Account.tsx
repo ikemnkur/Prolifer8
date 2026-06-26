@@ -179,7 +179,9 @@ export default function Account() {
             <TimerIcon className="w-4 h-4" />
             Spend History
           </button>
-          <button className="w-full text-left px-4 py-3 rounded-xl bg-surface-3 hover:bg-surface text-sm text-text-muted hover:text-text transition-colors flex items-center gap-2">
+          <button className="w-full text-left px-4 py-3 rounded-xl bg-surface-3 hover:bg-surface text-sm text-text-muted hover:text-text transition-colors flex items-center gap-2"
+                  onClick={() => navigate('/account/settings')}
+          >
             <Settings className="w-4 h-4" />
             Account Settings
           </button>

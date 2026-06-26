@@ -1,7 +1,7 @@
 /**
  * Prolifer8 — API Routes
  *
- * All drop, contribution, review, favourite, profile, follower,
+ * All post, contribution, review, favourite, profile, follower,
  * and dashboard endpoints for the Prolifer8 platform.
  *
  * Mount with:
@@ -13,6 +13,13 @@ const { v4: uuidv4 } = require('uuid');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+} = require('@aws-sdk/client-s3');
+const { getSignedUrl: presignUrl } = require('@aws-sdk/s3-request-presigner');
 
 const knex = require('./config/knex');
 
@@ -39,73 +46,73 @@ function engineApplyContribution(burnRate, contribution, goalAmount) {
   return burnRate + (goalAmount > 0 ? contribution / goalAmount : 0);
 }
 
-function computeDownloadPricing({
-  basePrice,
-  goalAmount,
-  contributedAmount,
-  actualDropTime,
-  totalDownloads,
-  timeConstant = DOWNLOAD_TIME_DECAY_CONSTANT,
-  sitePopularityConstant = DOWNLOAD_SITE_POPULARITY_CONSTANT,
-}) {
-  const safeBasePrice = Math.max(0, Number(basePrice) || 0);
-  const safeGoalAmount = Math.max(0, Number(goalAmount) || 0);
-  const safeContributedAmount = Math.max(0, Number(contributedAmount) || 0);
-  const safeDownloads = Math.max(0, Number(totalDownloads) || 0);
+// function computeDownloadPricing({
+//   basePrice,
+//   goalAmount,
+//   contributedAmount,
+//   actualPostTime,
+//   totalDownloads,
+//   timeConstant = DOWNLOAD_TIME_DECAY_CONSTANT,
+//   sitePopularityConstant = DOWNLOAD_SITE_POPULARITY_CONSTANT,
+// }) {
+//   const safeBasePrice = Math.max(0, Number(basePrice) || 0);
+//   const safeGoalAmount = Math.max(0, Number(goalAmount) || 0);
+//   const safeContributedAmount = Math.max(0, Number(contributedAmount) || 0);
+//   const safeDownloads = Math.max(0, Number(totalDownloads) || 0);
 
-  const contributionRatio = safeGoalAmount > 0
-    ? safeContributedAmount / safeGoalAmount
-    : 0;
-  const contributionFactor = Math.pow(Math.max(0, contributionRatio), 0.75);
-  const contributorDiscountPct = Math.max(0, contributionFactor * 100);
+//   const contributionRatio = safeGoalAmount > 0
+//     ? safeContributedAmount / safeGoalAmount
+//     : 0;
+//   const contributionFactor = Math.pow(Math.max(0, contributionRatio), 0.75);
+//   const contributorDiscountPct = Math.max(0, contributionFactor * 100);
 
-  const daysSinceDrop = actualDropTime
-    ? Math.max(0, (Date.now() - new Date(actualDropTime).getTime()) / 86_400_000)
-    : 0;
+//   const daysSincePost = actualPostTime
+//     ? Math.max(0, (Date.now() - new Date(actualPostTime).getTime()) / 86_400_000)
+//     : 0;
 
-  const timeDecayFraction = 1 - Math.pow(0.99, Math.max(0, timeConstant) * daysSinceDrop);
-  const volumeDecayFraction = 1 - Math.pow(0.99, Math.max(0, sitePopularityConstant) * (safeDownloads / 100));
+//   const timeDecayFraction = 1 - Math.pow(0.99, Math.max(0, timeConstant) * daysSincePost);
+//   const volumeDecayFraction = 1 - Math.pow(0.99, Math.max(0, sitePopularityConstant) * (safeDownloads / 100));
 
-  let contributorDiscountAmount = safeBasePrice * (contributorDiscountPct / 100);
-  let timeDecayDiscountAmount = safeBasePrice * Math.max(0, timeDecayFraction);
-  let volumeDecayDiscountAmount = safeBasePrice * Math.max(0, volumeDecayFraction);
+//   let contributorDiscountAmount = safeBasePrice * (contributorDiscountPct / 100);
+//   let timeDecayDiscountAmount = safeBasePrice * Math.max(0, timeDecayFraction);
+//   let volumeDecayDiscountAmount = safeBasePrice * Math.max(0, volumeDecayFraction);
 
-  const maxDiscountAmount = safeBasePrice * 0.95;
-  const rawDiscountAmount = contributorDiscountAmount + timeDecayDiscountAmount + volumeDecayDiscountAmount;
-  if (rawDiscountAmount > maxDiscountAmount && rawDiscountAmount > 0) {
-    const scale = maxDiscountAmount / rawDiscountAmount;
-    contributorDiscountAmount *= scale;
-    timeDecayDiscountAmount *= scale;
-    volumeDecayDiscountAmount *= scale;
-  }
+//   const maxDiscountAmount = safeBasePrice * 0.95;
+//   const rawDiscountAmount = contributorDiscountAmount + timeDecayDiscountAmount + volumeDecayDiscountAmount;
+//   if (rawDiscountAmount > maxDiscountAmount && rawDiscountAmount > 0) {
+//     const scale = maxDiscountAmount / rawDiscountAmount;
+//     contributorDiscountAmount *= scale;
+//     timeDecayDiscountAmount *= scale;
+//     volumeDecayDiscountAmount *= scale;
+//   }
 
-  const finalPrice = safeBasePrice === 0
-    ? 0
-    : Math.max(1, Math.floor(safeBasePrice - (contributorDiscountAmount + timeDecayDiscountAmount + volumeDecayDiscountAmount)));
+//   const finalPrice = safeBasePrice === 0
+//     ? 0
+//     : Math.max(1, Math.floor(safeBasePrice - (contributorDiscountAmount + timeDecayDiscountAmount + volumeDecayDiscountAmount)));
 
-  const contributorDiscountPctOut = safeBasePrice > 0 ? (contributorDiscountAmount / safeBasePrice) * 100 : 0;
-  const timeDecayDiscountPct = safeBasePrice > 0 ? (timeDecayDiscountAmount / safeBasePrice) * 100 : 0;
-  const volumeDecayDiscountPct = safeBasePrice > 0 ? (volumeDecayDiscountAmount / safeBasePrice) * 100 : 0;
-  const totalDiscountPct = contributorDiscountPctOut + timeDecayDiscountPct + volumeDecayDiscountPct;
+//   const contributorDiscountPctOut = safeBasePrice > 0 ? (contributorDiscountAmount / safeBasePrice) * 100 : 0;
+//   const timeDecayDiscountPct = safeBasePrice > 0 ? (timeDecayDiscountAmount / safeBasePrice) * 100 : 0;
+//   const volumeDecayDiscountPct = safeBasePrice > 0 ? (volumeDecayDiscountAmount / safeBasePrice) * 100 : 0;
+//   const totalDiscountPct = contributorDiscountPctOut + timeDecayDiscountPct + volumeDecayDiscountPct;
 
-  return {
-    contributorDiscountPct: +contributorDiscountPctOut.toFixed(2),
-    timeDecayDiscountPct: +timeDecayDiscountPct.toFixed(2),
-    volumeDecayDiscountPct: +volumeDecayDiscountPct.toFixed(2),
-    totalDiscountPct: +totalDiscountPct.toFixed(2),
-    finalPrice,
-  };
-}
+//   return {
+//     contributorDiscountPct: +contributorDiscountPctOut.toFixed(2),
+//     timeDecayDiscountPct: +timeDecayDiscountPct.toFixed(2),
+//     volumeDecayDiscountPct: +volumeDecayDiscountPct.toFixed(2),
+//     totalDiscountPct: +totalDiscountPct.toFixed(2),
+//     finalPrice,
+//   };
+// }
 
 // ── Notification helper (pool-based, mirrors notifications table schema) ──
-async function createNotif(pool, { userId, type, title, message = '', priority = 'info', category = 'system', relatedDropId = null, actionUrl = null }) {
+async function createNotif(pool, { userId, type, title, message = '', priority = 'info', category = 'system', relatedPostId = null, actionUrl = null }) {
   const id = Math.random().toString(36).substring(2, 12).toUpperCase();
   const createdAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
   try {
     await pool.query(
-      `INSERT IGNORE INTO notifications (id, userId, type, title, message, priority, category, relatedDropId, actionUrl, isRead, createdAt)
+      `INSERT IGNORE INTO notifications (id, userId, type, title, message, priority, category, relatedPostId, actionUrl, isRead, createdAt)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-      [id, userId, type, title, message, priority, category, relatedDropId, actionUrl, createdAt]
+      [id, userId, type, title, message, priority, category, relatedPostId, actionUrl, createdAt]
     );
   } catch (e) {
     console.error('createNotif error:', e.message);
@@ -124,6 +131,7 @@ const WALLET_TX_ENUM_VALUES = [
   'admin_adjustment',
   'bonus',
   'stall_purchase',
+  'tip',
 ];
 
 const WALLET_TX_TYPE_FALLBACKS = {
@@ -134,6 +142,7 @@ const WALLET_TX_TYPE_FALLBACKS = {
   creator_earning: 'bonus',
   creator_payout: 'admin_adjustment',
   stall_purchase: 'admin_adjustment',
+  tip: 'bonus',
 };
 
 async function ensureWalletTransactionTypeCompatibility(db) {
@@ -157,7 +166,8 @@ async function ensureWalletTransactionTypeCompatibility(db) {
         'creator_payout',
         'admin_adjustment',
         'bonus',
-        'stall_purchase'
+        'stall_purchase',
+        'tip'
       ) NOT NULL
     `);
 
@@ -169,7 +179,7 @@ async function ensureWalletTransactionTypeCompatibility(db) {
 
 async function insertWalletTransaction(db, tx) {
   const insertSql = `INSERT INTO walletTransactions
-    (id, userId, type, amount, balanceAfter, relatedDropId, relatedPurchaseId, relatedContributionId, description)
+    (id, userId, type, amount, balanceAfter, relatedPostId, relatedPurchaseId, relatedContributionId, description)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
   const id = tx.id || uuidv4();
@@ -179,7 +189,7 @@ async function insertWalletTransaction(db, tx) {
     tx.type,
     tx.amount,
     tx.balanceAfter,
-    tx.relatedDropId || null,
+    tx.relatedPostId || null,
     tx.relatedPurchaseId || null,
     tx.relatedContributionId || null,
     tx.description || null,
@@ -250,7 +260,7 @@ async function ensurePostReviewsTable(db) {
   await db.query(`
     CREATE TABLE IF NOT EXISTS postReviews (
       id VARCHAR(36) NOT NULL COMMENT 'UUID',
-      dropId VARCHAR(36) NOT NULL,
+      postId VARCHAR(36) NOT NULL,
       userId VARCHAR(10) NOT NULL,
       comment TEXT NOT NULL,
       liked TINYINT(1) DEFAULT NULL COMMENT '1=like, 0=dislike, NULL=no vote',
@@ -261,8 +271,8 @@ async function ensurePostReviewsTable(db) {
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
-      UNIQUE KEY unique_user_drop_review (dropId, userId) COMMENT 'One review per user per drop',
-      KEY idx_dropId (dropId),
+      UNIQUE KEY unique_user_post_review (postId, userId) COMMENT 'One review per user per post',
+      KEY idx_postId (postId),
       KEY idx_userId (userId),
       KEY idx_qrating (rating),
       KEY idx_erating (effortRating)
@@ -284,11 +294,29 @@ async function ensurePostFavoritesTable(db) {
   `);
 }
 
+async function ensurePostTipsTable(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS postTips (
+      id VARCHAR(36) NOT NULL,
+      postId VARCHAR(36) NOT NULL,
+      senderUserId VARCHAR(64) NOT NULL,
+      recipientUserId VARCHAR(64) NOT NULL,
+      amount INT UNSIGNED NOT NULL,
+      message VARCHAR(500) DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_post_tips_post (postId),
+      KEY idx_post_tips_sender (senderUserId),
+      KEY idx_post_tips_recipient (recipientUserId)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+  `);
+}
+
 async function ensurePostCommentsSchema(db) {
   await db.query(`
     CREATE TABLE IF NOT EXISTS postComments (
       id VARCHAR(36) NOT NULL,
-      dropId VARCHAR(36) NOT NULL,
+      postId VARCHAR(36) NOT NULL,
       userId VARCHAR(64) NOT NULL,
       parentCommentId VARCHAR(36) DEFAULT NULL,
       comment TEXT NOT NULL,
@@ -296,7 +324,7 @@ async function ensurePostCommentsSchema(db) {
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
-      KEY idx_post_comments_drop_created (dropId, created_at),
+      KEY idx_post_comments_post_created (postId, created_at),
       KEY idx_post_comments_parent (parentCommentId),
       KEY idx_post_comments_user (userId)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
@@ -335,16 +363,89 @@ async function ensurePostReactionsTable(db) {
   `);
 }
 
+async function ensurePostFlagsTable(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS postFlags (
+      id VARCHAR(36) NOT NULL,
+      postId VARCHAR(36) NOT NULL,
+      userId VARCHAR(10) NOT NULL,
+      reason ENUM('spam','scam','explicit','abuse','plagiarism','impersonation') NOT NULL,
+      description TEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uniq_post_flag_user (postId, userId),
+      KEY idx_post_flags_post (postId),
+      KEY idx_post_flags_user (userId),
+      KEY idx_post_flags_reason (reason)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+  `);
+
+  // await db.query(`ALTER TABLE postFlags ADD COLUMN IF NOT EXISTS description TEXT NOT NULL AFTER reason`);
+}
+
 // ──────────────────────────────────────────────────────────────
 module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY = '', gcs = {}) {
-  const { storage, BUCKET_NAME, DEST_PREFIX } = gcs;
+  const { storage, BUCKET_NAME, DEST_PREFIX, publicUrl, getSignedUrl } = gcs;
+  const signUrl = getSignedUrl || presignUrl;
+  const toPublicUrl = (objectPath) => {
+    if (typeof publicUrl === 'function') return publicUrl(BUCKET_NAME, objectPath);
+    return null;
+  };
 
-  ensureWalletTransactionTypeCompatibility(pool).catch(() => {});
+  const normalizeObjectKey = (input) => {
+    const value = String(input || '');
+    if (!value) return '';
+
+    if (/^https?:\/\//i.test(value)) {
+      try {
+        const parsed = new URL(value);
+        const bucketPrefix = `/${BUCKET_NAME}/`;
+        if (parsed.pathname.startsWith(bucketPrefix)) {
+          return decodeURIComponent(parsed.pathname.slice(bucketPrefix.length));
+        }
+        return decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
+      } catch {
+        return value;
+      }
+    }
+
+    return value.replace(/^gs:\/\/[^/]+\//, '').replace(/^\/+/, '');
+  };
+
+  const buildAbsoluteUrl = (req, routePath) => {
+    const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+    const protocol = forwardedProto || req.protocol;
+    return `${protocol}://${req.get('host')}${routePath.startsWith('/') ? routePath : `/${routePath}`}`;
+  };
+
+  const resolveThumbnailUrl = (req, postId, thumbnailValue) => {
+    const value = String(thumbnailValue || '').trim();
+    if (!value) return value;
+    if (/^https?:\/\//i.test(value)) return value;
+    if (value.startsWith('/uploads/')) return buildAbsoluteUrl(req, value);
+    return buildAbsoluteUrl(req, `${PROXY}/api/posts/${postId}/thumbnail`);
+  };
+
+  const serializePost = (req, post) => {
+    if (!post) return post;
+    return {
+      ...post,
+      thumbnailUrl: resolveThumbnailUrl(req, post.id, post.thumbnailUrl),
+    };
+  };
+
+  const serializePosts = (req, posts) => (posts || []).map((post) => serializePost(req, post));
+
+  ensureWalletTransactionTypeCompatibility(pool).catch(() => { });
   ensurePostReviewsTable(pool).catch((err) => {
     console.warn('⚠️ Failed to ensure postReviews table:', err.message || err);
   });
   ensurePostFavoritesTable(pool).catch((err) => {
     console.warn('⚠️ Failed to ensure postFavorites table:', err.message || err);
+  });
+  ensurePostTipsTable(pool).catch((err) => {
+    console.warn('⚠️ Failed to ensure postTips table:', err.message || err);
   });
   ensureTagInteractionsTable(pool).catch((err) => {
     console.warn('⚠️ Failed to ensure tagInteractions table:', err.message || err);
@@ -354,6 +455,9 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
   });
   ensurePostReactionsTable(pool).catch((err) => {
     console.warn('⚠️ Failed to ensure post reactions table:', err.message || err);
+  });
+  ensurePostFlagsTable(pool).catch((err) => {
+    console.warn('⚠️ Failed to ensure post flags table:', err.message || err);
   });
 
   // ============================================================
@@ -391,13 +495,14 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       const orderMap = {
         newest: 'd.created_at DESC',
         // popular: 'd.contributorCount DESC',
-        // ending: 'd.scheduledDropTime ASC',
+        // ending: 'd.scheduledPostTime ASC',
         views: 'd.views DESC',
       };
       const order = orderMap[sort] || orderMap.newest;
 
       const [rows] = await pool.query(
-        `SELECT d.*, u.username AS creatorName, u.profilePicture AS creatorAvatar
+        `SELECT d.*, u.username AS creatorName, u.profilePicture AS creatorAvatar,
+                (SELECT COUNT(*) FROM postFlags pf WHERE pf.postId = d.id) AS flagCount
          FROM posts d
          JOIN userData u ON u.id = d.creatorId
          ${where}
@@ -411,7 +516,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
         params
       );
 
-      res.json({ posts: rows, total, page: +page, limit: cap });
+      res.json({ posts: serializePosts(req, rows), total, page: +page, limit: cap });
     } catch (err) {
       console.error('GET /api/posts error:', err);
       res.status(500).json({ error: 'Failed to fetch posts' });
@@ -441,18 +546,23 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       const [newest] = await pool.query(
         `SELECT d.*, u.username AS creatorName, u.profilePicture AS creatorAvatar
          FROM posts d JOIN userData u ON u.id = d.creatorId
-         WHERE d.status IN ('active','pending','dropped') AND d.isPublic = 1
+         WHERE d.status IN ('active','pending','posted') AND d.isPublic = 1
          ORDER BY d.created_at DESC LIMIT 4`
       );
 
       const [topCreators] = await pool.query(
-        `SELECT id, username, profilePicture, bio, creatorRating, totalDropsCreated, totalCreditsEarned
+        `SELECT id, username, profilePicture, bio, creatorRating, totalPostsCreated, totalCreditsEarned
          FROM userData
-         WHERE accountType = 'creator' AND totalDropsCreated > 0
+         WHERE accountType = 'creator' AND totalPostsCreated > 0
          ORDER BY creatorRating DESC LIMIT 4`
       );
 
-      res.json({ featured, trending, newest, topCreators });
+      res.json({
+        featured: serializePosts(req, featured),
+        trending: serializePosts(req, trending),
+        newest: serializePosts(req, newest),
+        topCreators,
+      });
     } catch (err) {
       console.error('GET /api/posts/featured error:', err);
       res.status(500).json({ error: 'Failed to fetch featured posts' });
@@ -471,13 +581,13 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       const hasTag = !!tag;
       const [rows] = await pool.query(
         `SELECT id, userId, username, submissionType, mediaType, title, description,
-                targetDropId, target_url, mediaUrl, ctaText, budgetUsd, assetPath, status,
+                targetPostId, target_url, mediaUrl, ctaText, budgetUsd, assetPath, status,
                 clicks, impressions, likes, neutrals, dislikes, tags,
                 created_at, updated_at
          FROM promoSubmissions
          WHERE status = 'approved'
            AND (
-             (submissionType = 'drop_sponsorship' AND targetDropId IS NOT NULL AND targetDropId <> '')
+             (submissionType = 'post_sponsorship' AND targetPostId IS NOT NULL AND targetPostId <> '')
              OR (submissionType = 'ad' AND target_url IS NOT NULL AND target_url <> '')
            )
            ${hasTag ? 'AND tags IS NOT NULL AND LOWER(tags) LIKE LOWER(?)' : ''}
@@ -562,22 +672,27 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
 
   /**
    * GET /api/posts/:id
-   * Single drop with creator info.
+   * Single post with creator info.
    */
   server.get(PROXY + '/api/posts/:id', async (req, res) => {
     try {
       // Knex returns an array of records directly. .first() ensures we get one object.
       const row = await knex('posts as d')
         .join('userData as u', 'u.id', 'd.creatorId')
-        .select('d.*', 'u.username as creatorName', 'u.profilePicture as creatorAvatar')
+        .select(
+          'd.*',
+          'u.username as creatorName',
+          'u.profilePicture as creatorAvatar',
+          knex.raw('(SELECT COUNT(*) FROM postFlags pf WHERE pf.postId = d.id) as flagCount')
+        )
         .where('d.id', req.params.id)
         .first();
 
-      if (!row) return res.status(404).json({ error: 'Drop not found' });
-      res.json(row);
+      if (!row) return res.status(404).json({ error: 'Post not found' });
+      res.json(serializePost(req, row));
     } catch (err) {
       console.error('GET /api/posts/:id error:', err);
-      res.status(500).json({ error: 'Failed to fetch drop' });
+      res.status(500).json({ error: 'Failed to fetch post' });
     }
   });
 
@@ -633,12 +748,23 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
 
   /**
    * POST /api/posts
-   * Create a new drop. Requires authentication.
+   * Create a new post. Requires authentication.
    */
   server.post(PROXY + '/api/posts', authenticateToken, async (req, res) => {
     try {
       const userId = req.user.id;
-      const { title, description, fileType, tags, trailerUrl, thumbnailUrl } = req.body;
+      const {
+        title,
+        description,
+        fileType,
+        tags,
+        trailerUrl,
+        thumbnailUrl,
+        mature,
+        link,
+        linkUrl,
+        externalUrl,
+      } = req.body;
 
       if (!title && !(tags?.length > 0)) {
         return res.status(400).json({ error: 'Missing required fields: title' });
@@ -646,46 +772,51 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
 
       // In your raw query, you had 14 columns but only 8 values. 
       // Knex handles this perfectly by mapping explicitly to a key-value object.
-      const dropId = uuidv4();
+      const postId = uuidv4();
+      const resolvedLink = String(link || linkUrl || externalUrl || '').trim() || null;
+      const normalizedFileType = fileType || 'other';
       await knex('posts').insert({
-        id: dropId,
+        id: postId,
         creatorId: userId,
         title,
         description: description || '',
-        fileType: fileType || 'other',
+        fileType: normalizedFileType,
         tags: JSON.stringify(tags || []),
         trailerUrl: trailerUrl || null,
-        thumbnailUrl: thumbnailUrl || null,
+        thumbnailUrl: thumbnailUrl ? normalizeObjectKey(thumbnailUrl) : null,
+        link: normalizedFileType === 'link' ? resolvedLink : null,
+        mature: Boolean(mature),
         status: 'draft'
       });
 
       // Upgrade user to creator if needed using Knex increment
       await knex('userData')
         .where({ id: userId, accountType: 'free' })
-        .increment('totalDropsCreated', 1);
+        .increment('totalPostsCreated', 1);
 
-      res.status(201).json({ id: dropId, message: 'Drop created' });
+      res.status(201).json({ id: postId, message: 'Post created' });
     } catch (err) {
       console.error('POST /api/posts error:', err);
-      res.status(500).json({ error: 'Failed to create drop' });
+      res.status(500).json({ error: 'Failed to create post' });
     }
   });
 
   /**
    * PUT /api/posts/:id
-   * Update a drop (creator only, draft/pending only).
+   * Update a post (creator only, draft/pending only).
    */
   server.put(PROXY + '/api/posts/:id', authenticateToken, async (req, res) => {
     try {
-      const dropId = req.params.id;
+      const postId = req.params.id;
       const userId = req.user.id;
 
+      // fetch old thumbnail too
       const post = await knex('posts')
-        .select('creatorId', 'status')
-        .where('id', dropId)
+        .select('creatorId', 'status', 'thumbnailUrl')
+        .where('id', postId)
         .first();
 
-      if (!post) return res.status(404).json({ error: 'Drop not found' });
+      if (!post) return res.status(404).json({ error: 'Post not found' });
       if (post.creatorId !== userId) return res.status(403).json({ error: 'Not the creator' });
       if (!['draft', 'pending'].includes(post.status)) {
         return res.status(400).json({ error: 'Can only edit draft or pending posts' });
@@ -693,8 +824,8 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
 
       // Replaced your dynamic string construction loop with a standard clean object approach
       const allowed = [
-        'title', 'description', 'fileType', 'trailerUrl', 'thumbnailUrl',
-        'status', 'isPublic'
+        'title', 'description', 'fileType', 'trailerUrl', 'thumbnailUrl', 'mature',
+        'status', 'isPublic', 'link'
       ];
       const updateData = {};
 
@@ -708,8 +839,26 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       if (req.body.tags !== undefined) {
         updateData.tags = JSON.stringify(req.body.tags);
       }
-      // if (req.body.scheduledDropTime !== undefined) {
-      //   updateData.scheduledDropTime = new Date(req.body.scheduledDropTime);
+      if (req.body.linkUrl !== undefined && req.body.link === undefined) {
+        updateData.link = req.body.linkUrl;
+      }
+      if (req.body.externalUrl !== undefined && req.body.link === undefined && req.body.linkUrl === undefined) {
+        updateData.link = req.body.externalUrl;
+      }
+      if (updateData.link !== undefined) {
+        updateData.link = String(updateData.link || '').trim() || null;
+      }
+      if (req.body.fileType === 'link' && updateData.link === undefined) {
+        updateData.link = String(req.body.link || req.body.linkUrl || req.body.externalUrl || '').trim() || null;
+      }
+      if (req.body.fileType && req.body.fileType !== 'link' && req.body.link === undefined && req.body.linkUrl === undefined && req.body.externalUrl === undefined) {
+        updateData.link = null;
+      }
+      if (req.body.thumbnailUrl !== undefined) {
+        updateData.thumbnailUrl = req.body.thumbnailUrl ? normalizeObjectKey(req.body.thumbnailUrl) : null;
+      }
+      // if (req.body.scheduledPostTime !== undefined) {
+      //   updateData.scheduledPostTime = new Date(req.body.scheduledPostTime);
       // }
       // if (req.body.expiresAt !== undefined) {
       //   updateData.expiresAt = new Date(req.body.expiresAt);
@@ -719,11 +868,27 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
         return res.status(400).json({ error: 'Nothing to update' });
       }
 
-      await knex('posts').where('id', dropId).update(updateData);
-      res.json({ message: 'Drop updated' });
+
+      if (req.body.thumbnailKey !== undefined) {
+        const oldThumb = post.thumbnailUrl;
+        updateData.thumbnailUrl = req.body.thumbnailKey ? normalizeObjectKey(req.body.thumbnailKey) : null;
+
+        // delete the old object from R2 (best-effort; don't fail the request)
+        if (oldThumb && oldThumb !== updateData.thumbnailUrl) {
+          try {
+            const oldKey = normalizeObjectKey(oldThumb);
+            await storage.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: oldKey }));
+          } catch (delErr) {
+            console.warn('Failed to delete old thumbnail:', delErr.message);
+          }
+        }
+      }
+
+      await knex('posts').where('id', postId).update(updateData);
+      res.json({ message: 'Post updated' });
     } catch (err) {
       console.error('PUT /api/posts/:id error:', err);
-      res.status(500).json({ error: 'Failed to update drop' });
+      res.status(500).json({ error: 'Failed to update post' });
     }
   });
 
@@ -734,13 +899,13 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
   server.post(PROXY + '/api/posts/:id/publish', authenticateToken, async (req, res) => {
     try {
       const userId = req.user.id;
-      
+
       const post = await knex('posts')
         .select('creatorId', 'status', 'title')
         .where('id', req.params.id)
         .first();
 
-      if (!post) return res.status(404).json({ error: 'Drop not found' });
+      if (!post) return res.status(404).json({ error: 'Post not found' });
       if (post.creatorId !== userId) return res.status(403).json({ error: 'Not the creator' });
       if (post.status !== 'draft') return res.status(400).json({ error: 'Only draft posts can be published' });
 
@@ -748,13 +913,13 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       res.json({ message: `"${post.title}" is now live and awaiting contributions` });
     } catch (err) {
       console.error('POST /api/posts/:id/publish error:', err);
-      res.status(500).json({ error: 'Failed to publish drop' });
+      res.status(500).json({ error: 'Failed to publish post' });
     }
   });
 
   /**
    * DELETE /api/posts/:id
-   * Hard-delete a drop + GCS files (creator only).
+   * Hard-delete a post + GCS files (creator only).
    */
   server.delete(PROXY + '/api/posts/:id', authenticateToken, async (req, res) => {
     try {
@@ -765,30 +930,29 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
         .select('creatorId', 'filePath', 'thumbnailUrl')
         .where('id', postId)
         .first();
-      if (!post) return res.status(404).json({ error: 'Drop not found' });
+      if (!post) return res.status(404).json({ error: 'Post not found' });
       if (post.creatorId !== userId) return res.status(403).json({ error: 'Not the creator' });
 
-      // Delete files from Google Cloud Storage (best-effort)
+      // Delete files from object storage (best-effort)
       if (storage && BUCKET_NAME) {
         const filesToDelete = [post.filePath, post.thumbnailUrl].filter(Boolean);
         await Promise.allSettled(
           filesToDelete.map(async (filePath) => {
             try {
-              // filePath may be a GCS key or a full gs:// URL; normalise
-              const key = String(filePath).replace(/^gs:\/\/[^/]+\//, '').replace(/^https?:\/\/[^/]+\/[^/]+\//, '');
-              await storage.bucket(BUCKET_NAME).file(key).delete();
+              const key = normalizeObjectKey(filePath);
+              await storage.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: key }));
             } catch (e) {
-              console.warn(`GCS delete skipped for ${filePath}:`, e.message);
+              console.warn(`Storage delete skipped for ${filePath}:`, e.message);
             }
           })
         );
       }
 
       await knex('posts').where('id', postId).delete();
-      res.json({ message: 'Drop deleted' });
+      res.json({ message: 'Post deleted' });
     } catch (err) {
       console.error('DELETE /api/posts/:id error:', err);
-      res.status(500).json({ error: 'Failed to delete drop' });
+      res.status(500).json({ error: 'Failed to delete post' });
     }
   });
 
@@ -847,7 +1011,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
         avgRating: null,
         momentum: 0,
         burnRate: 1,
-        actualDropTime: null,
+        actualPostTime: null,
         created_at: knex.fn.now(),
         updated_at: knex.fn.now(),
       });
@@ -879,9 +1043,9 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       if (post.creatorId !== userId) return res.status(403).json({ error: 'Not the creator' });
 
       // Deduct credits from creator
-      const [[userRow]] = await pool.query('SELECT creditBalance FROM userData WHERE id = ?', [userId]);
+      const [[userRow]] = await pool.query('SELECT credits FROM userData WHERE id = ?', [userId]);
       if (!userRow) return res.status(404).json({ error: 'User not found' });
-      if (Number(userRow.creditBalance) < Number(budget)) {
+      if (Number(userRow.credits) < Number(budget)) {
         return res.status(400).json({ error: 'Insufficient credits' });
       }
 
@@ -936,14 +1100,14 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       );
 
       // Deduct budget once from wallet and move into campaign balance bucket.
-      const newBalance = Number(userRow.creditBalance) - Number(budget);
-      await pool.query('UPDATE userData SET creditBalance = ? WHERE id = ?', [newBalance, userId]);
+      const newBalance = Number(userRow.credits) - Number(budget);
+      await pool.query('UPDATE userData SET credits = ? WHERE id = ?', [newBalance, userId]);
       await insertWalletTransaction(pool, {
         userId,
         type: 'admin_adjustment',
         amount: -Number(budget),
         balanceAfter: newBalance,
-        relatedDropId: postId,
+        relatedPostId: postId,
         description: `Boost campaign pre-allocation for post ${postId}`,
       });
 
@@ -1023,7 +1187,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
           type: 'bonus',
           amount: watcherReward,
           balanceAfter: newBal,
-          relatedDropId: postId,
+          relatedPostId: postId,
           description: `Boost view reward from post ${postId}`,
         });
       }
@@ -1059,35 +1223,36 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
 
   /**
    * GET /api/posts/:id
-   * Single drop with creator info.
+   * Single post with creator info.
    */
   server.get(PROXY + '/api/posts/:id', async (req, res) => {
     try {
       const [rows] = await pool.query(
-        `SELECT d.*, u.username AS creatorName, u.profilePicture AS creatorAvatar
+        `SELECT d.*, u.username AS creatorName, u.profilePicture AS creatorAvatar,
+                (SELECT COUNT(*) FROM postFlags pf WHERE pf.postId = d.id) AS flagCount
          FROM posts d
          JOIN userData u ON u.id = d.creatorId
          WHERE d.id = ?`,
         [req.params.id]
       );
-      if (!rows.length) return res.status(404).json({ error: 'Drop not found' });
-      res.json(rows[0]);
+      if (!rows.length) return res.status(404).json({ error: 'Post not found' });
+      res.json(serializePost(req, rows[0]));
     } catch (err) {
       console.error('GET /api/posts/:id error:', err);
-      res.status(500).json({ error: 'Failed to fetch drop' });
+      res.status(500).json({ error: 'Failed to fetch post' });
     }
   });
 
-    /**
-   * POST /api/posts
-   * Create a new drop. Requires authentication.
-   * Body: title, description, fileType, tags[], trailerUrl?, thumbnailUrl?
-   * File upload is handled separately via /api/posts/:id/upload-url + /confirm-upload.
-   */
+  /**
+ * POST /api/posts
+ * Create a new post. Requires authentication.
+ * Body: title, description, fileType, tags[], trailerUrl?, thumbnailUrl?
+ * File upload is handled separately via /api/posts/:id/upload-url + /confirm-upload.
+ */
   server.post(PROXY + '/api/posts', authenticateToken, async (req, res) => {
     try {
       const userId = req.user.id;
-      
+
       // Removed all unused fields from extraction
       const {
         title, description, fileType, tags,
@@ -1098,7 +1263,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
         return res.status(400).json({ error: 'Missing required fields: title' });
       }
 
-      const dropId = uuidv4();
+      const postId = uuidv4();
       await pool.query(
         `INSERT INTO posts
          (id, creatorId, title, description, fileType, tags,
@@ -1106,32 +1271,32 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
           trailerUrl, thumbnailUrl, status)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`,
         [
-          dropId, 
-          userId, 
-          title, 
+          postId,
+          userId,
+          title,
           description || '',
-          fileType || 'other', 
+          fileType || 'other',
           JSON.stringify(tags || []),
-          trailerUrl || null, 
+          trailerUrl || null,
           thumbnailUrl || null,
         ]
       );
 
       // Upgrade user to creator if needed
       await pool.query(
-        `UPDATE userData SET totalDropsCreated = totalDropsCreated + 1 WHERE id = ? AND accountType = 'free'`,
+        `UPDATE userData SET totalPostsCreated = totalPostsCreated + 1 WHERE id = ? AND accountType = 'free'`,
         [userId]
       );
 
-      res.status(201).json({ id: dropId, message: 'Drop created' });
+      res.status(201).json({ id: postId, message: 'Post created' });
     } catch (err) {
       console.error('POST /api/posts error:', err);
-      res.status(500).json({ error: 'Failed to create drop' });
+      res.status(500).json({ error: 'Failed to create post' });
     }
   });
 
 
- 
+
 
 
 
@@ -1146,7 +1311,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
    */
   server.get(PROXY + '/api/posts/:id/price-preview', async (req, res) => {
     try {
-      const dropId = req.params.id;
+      const postId = req.params.id;
       // Soft auth — not required
       let userId = null;
       try {
@@ -1156,35 +1321,35 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
           const payload = jwt.verify(hdr.split(' ')[1], process.env.JWT_SECRET || 'secret');
           userId = payload.id || payload.userId || null;
         }
-      } catch (_) {}
+      } catch (_) { }
 
-      const [[drop]] = await pool.query(
-        `SELECT id, creatorId, basePrice, goalAmount, actualDropTime, totalDownloads,
+      const [[post]] = await pool.query(
+        `SELECT id, creatorId, basePrice, goalAmount, actualPostTime, totalDownloads,
                 status
          FROM posts WHERE id = ?`,
-        [dropId]
+        [postId]
       );
-      if (!drop) return res.status(404).json({ error: 'Drop not found' });
+      if (!post) return res.status(404).json({ error: 'Post not found' });
 
       let contributedAmount = 0;
-      const isCreator = userId != null && userId === drop.creatorId;
+      const isCreator = userId != null && userId === post.creatorId;
 
       if (userId) {
         const [[c]] = await pool.query(
-          `SELECT COALESCE(SUM(amount),0) AS contributed FROM contributions WHERE dropId = ? AND userId = ? AND isRefunded = 0`,
-          [dropId, userId]
+          `SELECT COALESCE(SUM(amount),0) AS contributed FROM contributions WHERE postId = ? AND userId = ? AND isRefunded = 0`,
+          [postId, userId]
         );
         contributedAmount = Number(c.contributed) || 0;
       }
 
       // Calculate preview for users who haven't downloaded yet
-      const basePrice = drop.basePrice;
+      const basePrice = post.basePrice;
       const pricing = computeDownloadPricing({
         basePrice,
-        goalAmount: drop.goalAmount,
+        goalAmount: post.goalAmount,
         contributedAmount,
-        actualDropTime: drop.actualDropTime,
-        totalDownloads: drop.totalDownloads,
+        actualPostTime: post.actualPostTime,
+        totalDownloads: post.totalDownloads,
       });
       const finalPrice = isCreator ? 0 : pricing.finalPrice;
 
@@ -1207,28 +1372,33 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
 
   /**
    * GET /api/posts/:id/download-url
-   * Returns a 1h signed GCS URL for users who have purchased the drop.
+   * Returns a 1h signed GCS URL for users who have purchased the post.
    */
   server.get(PROXY + '/api/posts/:id/download-url', authenticateToken, async (req, res) => {
     try {
       const userId = req.user.id;
-      const dropId = req.params.id;
+      const postId = req.params.id;
 
-      const [[drop]] = await pool.query(
-        `SELECT creatorId, filePath, originalFileName, status FROM posts WHERE id = ?`, [dropId]
+      const [[post]] = await pool.query(
+        `SELECT creatorId, filePath, originalFileName, status FROM posts WHERE id = ?`, [postId]
       );
-      if (!drop) return res.status(404).json({ error: 'Drop not found' });
-      if (drop.status !== 'dropped') return res.status(400).json({ error: 'Drop not yet released' });
-      if (!drop.filePath) return res.status(404).json({ error: 'No file attached to this drop yet' });
+      if (!post) return res.status(404).json({ error: 'Post not found' });
+      if (post.status !== 'posted') return res.status(400).json({ error: 'Post not yet released' });
+      if (!post.filePath) return res.status(404).json({ error: 'No file attached to this post yet' });
 
-      const [signedUrl] = await storage.bucket(BUCKET_NAME).file(drop.filePath).getSignedUrl({
-        version: 'v4',
-        action: 'read',
-        expires: Date.now() + 5 * 60 * 1000, // 5 minutes
-        responseDisposition: `attachment; filename="${drop.originalFileName || 'download'}"`,
-      });
+      if (!storage) return res.status(503).json({ error: 'Cloud storage not configured' });
 
-      res.json({ url: signedUrl, filename: drop.originalFileName || 'download' });
+      const signedUrl = await signUrl(
+        storage,
+        new GetObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: normalizeObjectKey(post.filePath),
+          ResponseContentDisposition: `attachment; filename="${post.originalFileName || 'download'}"`,
+        }),
+        { expiresIn: 5 * 60 }
+      );
+
+      res.json({ url: signedUrl, filename: post.originalFileName || 'download' });
     } catch (err) {
       console.error('GET /api/posts/:id/download-url error:', err);
       res.status(500).json({ error: 'Failed to generate download URL' });
@@ -1237,61 +1407,62 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
 
   /**
    * GET /api/posts/:id/file-url
-   * Returns a short-lived signed URL for inline viewing of dropped post files.
+   * Returns a short-lived signed URL for inline viewing of posted post files.
    */
   server.get(PROXY + '/api/posts/:id/file-url', async (req, res) => {
     try {
-      const dropId = req.params.id;
-      const [[drop]] = await pool.query(
+      const postId = req.params.id;
+      const [[post]] = await pool.query(
         `SELECT id, status, filePath, originalFileName, mimeType FROM posts WHERE id = ?`,
-        [dropId]
+        [postId]
       );
 
-      if (!drop) return res.status(404).json({ error: 'Post not found' });
-      if (drop.status === 'removed') return res.status(403).json({ error: 'Post file not publicly available' });
-      if (!drop.filePath) return res.status(404).json({ error: 'No file attached to this post yet' });
+      if (!post) return res.status(404).json({ error: 'Post not found' });
+      if (post.status === 'removed') return res.status(403).json({ error: 'Post file not publicly available' });
+      if (!post.filePath) return res.status(404).json({ error: 'No file attached to this post yet' });
 
-      if (/^https?:\/\//i.test(drop.filePath)) {
+      if (/^https?:\/\//i.test(post.filePath)) {
         return res.json({
-          fileUrl: drop.filePath,
-          mimeType: drop.mimeType || null,
-          originalFileName: drop.originalFileName || null,
+          fileUrl: post.filePath,
+          mimeType: post.mimeType || null,
+          originalFileName: post.originalFileName || null,
         });
       }
 
-      const objectPath = String(drop.filePath).replace(/^\/+/, '');
-      const publicUrl = BUCKET_NAME
-        ? `https://storage.googleapis.com/${BUCKET_NAME}/${encodeURI(objectPath)}`
-        : null;
+      const objectPath = normalizeObjectKey(post.filePath);
+      const publicAssetUrl = BUCKET_NAME ? toPublicUrl(objectPath) : null;
 
       if (!storage) {
-        if (!publicUrl) return res.status(503).json({ error: 'Cloud storage not configured' });
+        if (!publicAssetUrl) return res.status(503).json({ error: 'Cloud storage not configured' });
         return res.json({
-          fileUrl: publicUrl,
-          mimeType: drop.mimeType || null,
-          originalFileName: drop.originalFileName || null,
+          fileUrl: publicAssetUrl,
+          mimeType: post.mimeType || null,
+          originalFileName: post.originalFileName || null,
         });
       }
 
       try {
-        const [signedUrl] = await storage.bucket(BUCKET_NAME).file(objectPath).getSignedUrl({
-          version: 'v4',
-          action: 'read',
-          expires: Date.now() + 5 * 60 * 1000,
-          responseDisposition: 'inline',
-        });
+        const signedUrl = await signUrl(
+          storage,
+          new GetObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: objectPath,
+            ResponseContentDisposition: 'inline',
+          }),
+          { expiresIn: 5 * 60 }
+        );
 
         return res.json({
           fileUrl: signedUrl,
-          mimeType: drop.mimeType || null,
-          originalFileName: drop.originalFileName || null,
+          mimeType: post.mimeType || null,
+          originalFileName: post.originalFileName || null,
         });
       } catch (signErr) {
-        if (!publicUrl) throw signErr;
+        if (!publicAssetUrl) throw signErr;
         return res.json({
-          fileUrl: publicUrl,
-          mimeType: drop.mimeType || null,
-          originalFileName: drop.originalFileName || null,
+          fileUrl: publicAssetUrl,
+          mimeType: post.mimeType || null,
+          originalFileName: post.originalFileName || null,
         });
       }
     } catch (err) {
@@ -1306,20 +1477,25 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
    */
   server.post(PROXY + '/api/posts/:id/download', authenticateToken, async (req, res) => {
     try {
-      const dropId = req.params.id;
-      const [[drop]] = await pool.query('SELECT filePath, originalFileName, status FROM posts WHERE id = ?', [dropId]);
-      if (!drop) return res.status(404).json({ error: 'Drop not found' });
-      if (drop.status !== 'dropped') return res.status(400).json({ error: 'Drop not yet released' });
-      if (!drop.filePath) return res.status(404).json({ error: 'No file attached to this post yet' });
+      const postId = req.params.id;
+      const [[post]] = await pool.query('SELECT filePath, originalFileName, status FROM posts WHERE id = ?', [postId]);
+      if (!post) return res.status(404).json({ error: 'Post not found' });
+      if (post.status !== 'posted') return res.status(400).json({ error: 'Post not yet released' });
+      if (!post.filePath) return res.status(404).json({ error: 'No file attached to this post yet' });
 
-      const [signedUrl] = await storage.bucket(BUCKET_NAME).file(drop.filePath).getSignedUrl({
-        version: 'v4',
-        action: 'read',
-        expires: Date.now() + 60 * 60 * 1000,
-        responseDisposition: `attachment; filename="${drop.originalFileName || 'download'}"`,
-      });
+      if (!storage) return res.status(503).json({ error: 'Cloud storage not configured' });
 
-      res.json({ url: signedUrl, filename: drop.originalFileName || 'download' });
+      const signedUrl = await signUrl(
+        storage,
+        new GetObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: normalizeObjectKey(post.filePath),
+          ResponseContentDisposition: `attachment; filename="${post.originalFileName || 'download'}"`,
+        }),
+        { expiresIn: 60 * 60 }
+      );
+
+      res.json({ url: signedUrl, filename: post.originalFileName || 'download' });
     } catch (err) {
       console.error('POST /api/posts/:id/download error:', err);
       res.status(500).json({ error: 'Download failed' });
@@ -1342,12 +1518,12 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
         `SELECT r.*, u.username, u.profilePicture AS avatar
          FROM postReviews r
          JOIN userData u ON u.id = r.userId
-         WHERE r.dropId = ? AND r.isHidden = 0
+         WHERE r.postId = ? AND r.isHidden = 0
          ORDER BY ${order}
          LIMIT 50`,
         [req.params.id]
       );
-      res.json(rows);
+      res.json(serializePosts(req, rows));
     } catch (err) {
       console.error('GET /api/posts/:id/reviews error:', err);
       res.status(500).json({ error: 'Failed to fetch reviews' });
@@ -1361,7 +1537,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
   server.post(PROXY + '/api/posts/:id/reviews', authenticateToken, async (req, res) => {
     try {
       const userId = req.user.id;
-      const dropId = req.params.id;
+      const postId = req.params.id;
       const { comment, rating, liked, effortRating } = req.body;
 
       if (!comment || rating === undefined) {
@@ -1375,7 +1551,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
 
       const reviewId = uuidv4();
       await pool.query(
-        `INSERT INTO postReviews (id, dropId, userId, comment, rating, effortRating, liked)
+        `INSERT INTO postReviews (id, postId, userId, comment, rating, effortRating, liked)
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            comment = VALUES(comment),
@@ -1385,7 +1561,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
            isEdited = 1`,
         [
           reviewId,
-          dropId,
+          postId,
           userId,
           comment,
           clampedRating,
@@ -1394,21 +1570,204 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
         ]
       );
 
-      // Recalculate drop average rating
+      // Recalculate post average rating
       await pool.query(
         `UPDATE posts SET
-          avgRating = (SELECT AVG(rating) FROM postReviews WHERE dropId = ? AND isHidden = 0),
-          reviewCount = (SELECT COUNT(*) FROM postReviews WHERE dropId = ? AND isHidden = 0),
-          likeCount = (SELECT COUNT(*) FROM postReviews WHERE dropId = ? AND liked = 1 AND isHidden = 0),
-          dislikeCount = (SELECT COUNT(*) FROM postReviews WHERE dropId = ? AND liked = 0 AND isHidden = 0)
+          avgRating = (SELECT AVG(rating) FROM postReviews WHERE postId = ? AND isHidden = 0),
+          reviewCount = (SELECT COUNT(*) FROM postReviews WHERE postId = ? AND isHidden = 0),
+          likeCount = (SELECT COUNT(*) FROM postReviews WHERE postId = ? AND liked = 1 AND isHidden = 0),
+          dislikeCount = (SELECT COUNT(*) FROM postReviews WHERE postId = ? AND liked = 0 AND isHidden = 0)
          WHERE id = ?`,
-        [dropId, dropId, dropId, dropId, dropId]
+        [postId, postId, postId, postId, postId]
       );
 
       res.status(201).json({ id: reviewId, message: 'Review submitted' });
     } catch (err) {
       console.error('POST /api/posts/:id/reviews error:', err);
       res.status(500).json({ error: 'Failed to submit review' });
+    }
+  });
+
+  /**
+   * POST /api/posts/:id/tip
+   * Body: { amount: number, message?: string }
+   */
+  server.post(PROXY + '/api/posts/:id/tip', authenticateToken, async (req, res) => {
+    const conn = await pool.getConnection();
+    try {
+      const postId = String(req.params.id || '').trim();
+      const senderUserId = String(req.user.id || '').trim();
+      const amount = Number(req.body?.amount || 0);
+      const message = String(req.body?.message || '').trim();
+
+      if (!postId) return res.status(400).json({ error: 'Invalid post id' });
+      if (!Number.isInteger(amount) || amount <= 0) {
+        return res.status(400).json({ error: 'Tip amount must be a whole number greater than 0' });
+      }
+      if (amount > 1_000_000) {
+        return res.status(400).json({ error: 'Tip amount is too large' });
+      }
+      if (message.length > 500) {
+        return res.status(400).json({ error: 'Tip message cannot exceed 500 characters' });
+      }
+
+      await conn.beginTransaction();
+
+      const [postRows] = await conn.query(
+        'SELECT id, creatorId, title FROM posts WHERE id = ? LIMIT 1 FOR UPDATE',
+        [postId]
+      );
+      const post = postRows?.[0];
+      if (!post) {
+        await conn.rollback();
+        return res.status(404).json({ error: 'Post not found' });
+      }
+
+      const recipientUserId = String(post.creatorId || '').trim();
+      if (!recipientUserId) {
+        await conn.rollback();
+        return res.status(400).json({ error: 'Post owner not found' });
+      }
+      if (recipientUserId === senderUserId) {
+        await conn.rollback();
+        return res.status(400).json({ error: 'You cannot tip your own post' });
+      }
+
+      const [senderRows] = await conn.query(
+        'SELECT id, username, credits FROM userData WHERE id = ? LIMIT 1 FOR UPDATE',
+        [senderUserId]
+      );
+      const sender = senderRows?.[0];
+      if (!sender) {
+        await conn.rollback();
+        return res.status(404).json({ error: 'Sender account not found' });
+      }
+
+      const [recipientRows] = await conn.query(
+        'SELECT id, username, credits FROM userData WHERE id = ? LIMIT 1 FOR UPDATE',
+        [recipientUserId]
+      );
+      const recipient = recipientRows?.[0];
+      if (!recipient) {
+        await conn.rollback();
+        return res.status(404).json({ error: 'Recipient account not found' });
+      }
+
+      const senderCredits = Number(sender.credits || 0);
+      const recipientCredits = Number(recipient.credits || 0);
+      if (senderCredits < amount) {
+        await conn.rollback();
+        return res.status(400).json({ error: 'Insufficient credits' });
+      }
+
+      const nextSenderCredits = senderCredits - amount;
+      const nextRecipientCredits = recipientCredits + amount;
+
+      await conn.query('UPDATE userData SET credits = ? WHERE id = ?', [nextSenderCredits, senderUserId]);
+      await conn.query('UPDATE userData SET credits = ? WHERE id = ?', [nextRecipientCredits, recipientUserId]);
+
+      const tipId = uuidv4();
+      await conn.query(
+        'INSERT INTO postTips (id, postId, senderUserId, recipientUserId, amount, message) VALUES (?, ?, ?, ?, ?, ?)',
+        [tipId, postId, senderUserId, recipientUserId, amount, message || null]
+      );
+
+      await conn.commit();
+
+      await insertWalletTransaction(pool, {
+        userId: senderUserId,
+        type: 'tip',
+        amount: -amount,
+        balanceAfter: nextSenderCredits,
+        relatedPostId: postId,
+        description: `Tip sent to ${recipient.username || recipientUserId} on post ${post.title || postId}`,
+      });
+
+      await insertWalletTransaction(pool, {
+        userId: recipientUserId,
+        type: 'tip',
+        amount,
+        balanceAfter: nextRecipientCredits,
+        relatedPostId: postId,
+        description: `Tip received from ${sender.username || senderUserId} on post ${post.title || postId}`,
+      });
+
+      await createNotif(pool, {
+        userId: recipientUserId,
+        type: 'tip_received',
+        title: 'You received a tip',
+        message: `${sender.username || 'A supporter'} tipped you ${amount} credits${message ? `: "${message}"` : ''}`,
+        priority: 'success',
+        category: 'earning',
+        relatedPostId: postId,
+      });
+
+      await createNotif(pool, {
+        userId: senderUserId,
+        type: 'tip_sent',
+        title: 'Tip sent',
+        message: `You tipped ${recipient.username || 'the creator'} ${amount} credits${message ? `: "${message}"` : ''}`,
+        priority: 'info',
+        category: 'payment',
+        relatedPostId: postId,
+      });
+
+      return res.json({
+        success: true,
+        tipId,
+        senderBalance: nextSenderCredits,
+      });
+    } catch (err) {
+      await conn.rollback();
+      console.error('POST /api/posts/:id/tip error:', err);
+      return res.status(500).json({ error: 'Failed to process tip' });
+    } finally {
+      conn.release();
+    }
+  });
+
+  /**
+   * GET /api/posts/:id/tips
+   * Creator-only list of tips received for the post.
+   */
+  server.get(PROXY + '/api/posts/:id/tips', authenticateToken, async (req, res) => {
+    try {
+      const postId = String(req.params.id || '').trim();
+      const userId = String(req.user?.id || '').trim();
+
+      if (!postId) return res.status(400).json({ error: 'Invalid post id' });
+
+      const [postRows] = await pool.query(
+        'SELECT id, creatorId FROM posts WHERE id = ? LIMIT 1',
+        [postId]
+      );
+      const post = postRows?.[0];
+      if (!post) return res.status(404).json({ error: 'Post not found' });
+      if (String(post.creatorId || '') !== userId) {
+        return res.status(403).json({ error: 'Only the post creator can view tips for this post' });
+      }
+
+      const [rows] = await pool.query(
+        `SELECT
+           t.id,
+           t.senderUserId,
+           COALESCE(u.username, t.senderUserId) AS senderUsername,
+           t.amount,
+           t.message,
+           t.created_at
+         FROM postTips t
+         LEFT JOIN userData u ON u.id = t.senderUserId
+         WHERE t.postId = ?
+         ORDER BY t.created_at DESC
+         LIMIT 200`,
+        [postId]
+      );
+
+      const totalTips = rows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+      res.json({ tips: rows, totalTips, count: rows.length });
+    } catch (err) {
+      console.error('GET /api/posts/:id/tips error:', err);
+      res.status(500).json({ error: 'Failed to load tips' });
     }
   });
 
@@ -1483,6 +1842,71 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
     }
   });
 
+  /**
+   * POST /api/posts/:id/flag
+   * Body: { reason: 'spam'|'scam'|'explicit'|'abuse'|'plagiarism'|'impersonation' }
+   */
+  server.post(PROXY + '/api/posts/:id/flag', authenticateToken, async (req, res) => {
+    try {
+      const postId = String(req.params.id || '').trim();
+      const userId = String(req.user.id || '').trim();
+      const reason = String(req.body?.reason || '').trim().toLowerCase();
+      const description = String(req.body?.description || '').trim();
+      const evidenceUrlRaw = String(req.body?.evidenceUrl || '').trim();
+      const allowedReasons = new Set(['spam', 'scam', 'explicit', 'abuse', 'plagiarism', 'impersonation']);
+
+      if (!postId) return res.status(400).json({ error: 'Invalid post id' });
+      if (!allowedReasons.has(reason)) return res.status(400).json({ error: 'Invalid reason' });
+      if (description.length < 60 || description.length > 900) {
+        return res.status(400).json({ error: 'Explanation must be between 60 and 900 characters' });
+      }
+      if (evidenceUrlRaw && !/^https?:\/\//i.test(evidenceUrlRaw)) {
+        return res.status(400).json({ error: 'Evidence URL must start with http:// or https://' });
+      }
+
+      const evidenceUrl = evidenceUrlRaw.slice(0, 400);
+      const descriptionStored = evidenceUrl
+        ? `${description}\n\nEvidence URL: ${evidenceUrl}`
+        : description;
+
+      const [postRows] = await pool.query('SELECT id FROM posts WHERE id = ? LIMIT 1', [postId]);
+      if (!postRows.length) return res.status(404).json({ error: 'Post not found' });
+
+      const [existingRows] = await pool.query(
+        'SELECT id FROM postFlags WHERE postId = ? AND userId = ? LIMIT 1',
+        [postId, userId]
+      );
+
+      if (existingRows.length) {
+        await pool.query(
+          'UPDATE postFlags SET reason = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE postId = ? AND userId = ?',
+          [reason, descriptionStored, postId, userId]
+        );
+      } else {
+        await pool.query(
+          'INSERT INTO postFlags (id, postId, userId, reason, description) VALUES (?, ?, ?, ?, ?)',
+          [uuidv4(), postId, userId, reason, descriptionStored]
+        );
+      }
+
+      const [[counts]] = await pool.query(
+        'SELECT COUNT(*) AS flagCount FROM postFlags WHERE postId = ?',
+        [postId]
+      );
+
+      const flagCount = Number(counts?.flagCount || 0);
+      res.json({
+        success: true,
+        flagCount,
+        hiddenFromExplore: flagCount >= 3,
+        hiddenFromRecommendations: flagCount >= 5,
+      });
+    } catch (err) {
+      console.error('POST /api/posts/:id/flag error:', err);
+      res.status(500).json({ error: 'Failed to flag post' });
+    }
+  });
+
   // ============================================================
   //  COMMENTS / REPLIES / REACTIONS
   // ============================================================
@@ -1492,12 +1916,12 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
    */
   server.get(PROXY + '/api/posts/:id/comments', async (req, res) => {
     try {
-      const dropId = req.params.id;
+      const postId = req.params.id;
 
       const [rows] = await pool.query(
         `SELECT
            c.id,
-           c.dropId,
+           c.postId,
            c.userId,
            c.parentCommentId,
            c.comment,
@@ -1509,10 +1933,10 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
          FROM postComments c
          JOIN userData u ON u.id = c.userId
          LEFT JOIN postCommentReactions r ON r.commentId = c.id
-         WHERE c.dropId = ? AND c.isDeleted = 0
-         GROUP BY c.id, c.dropId, c.userId, c.parentCommentId, c.comment, c.created_at, u.username, u.profilePicture
+         WHERE c.postId = ? AND c.isDeleted = 0
+         GROUP BY c.id, c.postId, c.userId, c.parentCommentId, c.comment, c.created_at, u.username, u.profilePicture
          ORDER BY c.created_at ASC`,
-        [dropId]
+        [postId]
       );
 
       const byId = new Map();
@@ -1558,7 +1982,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
   server.post(PROXY + '/api/posts/:id/comments', authenticateToken, async (req, res) => {
     try {
       const userId = req.user.id;
-      const dropId = req.params.id;
+      const postId = req.params.id;
       const { comment, parentCommentId } = req.body;
 
       if (!comment || !String(comment).trim()) {
@@ -1567,18 +1991,18 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
 
       if (parentCommentId) {
         const [[parent]] = await pool.query(
-          'SELECT id, dropId FROM postComments WHERE id = ? AND isDeleted = 0',
+          'SELECT id, postId FROM postComments WHERE id = ? AND isDeleted = 0',
           [parentCommentId]
         );
         if (!parent) return res.status(404).json({ error: 'Parent comment not found' });
-        if (parent.dropId !== dropId) return res.status(400).json({ error: 'Invalid parent comment target' });
+        if (parent.postId !== postId) return res.status(400).json({ error: 'Invalid parent comment target' });
       }
 
       const commentId = uuidv4();
       await pool.query(
-        `INSERT INTO postComments (id, dropId, userId, parentCommentId, comment)
+        `INSERT INTO postComments (id, postId, userId, parentCommentId, comment)
          VALUES (?, ?, ?, ?, ?)`,
-        [commentId, dropId, userId, parentCommentId || null, String(comment).trim()]
+        [commentId, postId, userId, parentCommentId || null, String(comment).trim()]
       );
 
       res.status(201).json({ id: commentId, message: 'Comment posted' });
@@ -1603,16 +2027,16 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       }
 
       const [[parent]] = await pool.query(
-        'SELECT id, dropId FROM postComments WHERE id = ? AND isDeleted = 0',
+        'SELECT id, postId FROM postComments WHERE id = ? AND isDeleted = 0',
         [parentId]
       );
       if (!parent) return res.status(404).json({ error: 'Parent comment not found' });
 
       const commentId = uuidv4();
       await pool.query(
-        `INSERT INTO postComments (id, dropId, userId, parentCommentId, comment)
+        `INSERT INTO postComments (id, postId, userId, parentCommentId, comment)
          VALUES (?, ?, ?, ?, ?)`,
-        [commentId, parent.dropId, userId, parentId, String(comment).trim()]
+        [commentId, parent.postId, userId, parentId, String(comment).trim()]
       );
 
       res.status(201).json({ id: commentId, message: 'Reply posted' });
@@ -1723,10 +2147,10 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
   server.post(PROXY + '/api/posts/:id/favorite', authenticateToken, async (req, res) => {
     try {
       const userId = req.user.id;
-      const dropId = req.params.id;
+      const postId = req.params.id;
 
       const [[existing]] = await pool.query(
-        'SELECT id FROM postFavorites WHERE dropId = ? AND userId = ?', [dropId, userId]
+        'SELECT id FROM postFavorites WHERE postId = ? AND userId = ?', [postId, userId]
       );
 
       if (existing) {
@@ -1734,7 +2158,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
         res.json({ favorited: false });
       } else {
         await pool.query(
-          'INSERT INTO postFavorites (dropId, userId) VALUES (?, ?)', [dropId, userId]
+          'INSERT INTO postFavorites (postId, userId) VALUES (?, ?)', [postId, userId]
         );
         res.json({ favorited: true });
       }
@@ -1754,13 +2178,13 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
         `SELECT d.*, u.username AS creatorName, u.profilePicture AS creatorAvatar,
                 f.created_at AS favoritedAt
          FROM postFavorites f
-         JOIN posts d ON d.id = f.dropId
+         JOIN posts d ON d.id = f.postId
          JOIN userData u ON u.id = d.creatorId
          WHERE f.userId = ?
          ORDER BY f.created_at DESC`,
         [req.user.id]
       );
-      res.json(rows);
+      res.json(serializePosts(req, rows));
     } catch (err) {
       console.error('GET /api/user/favorites error:', err);
       res.status(500).json({ error: 'Failed to fetch favorites' });
@@ -1782,10 +2206,10 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       if (!q || q.length < 2) return res.json([]);
       const [rows] = await pool.query(
         `SELECT id, username, profilePicture, bio, accountType,
-                totalDropsCreated, totalCreditsEarned
+                totalPostsCreated, totalCreditsEarned
          FROM userData
          WHERE username LIKE ? AND isBanned = 0
-         ORDER BY totalDropsCreated DESC
+         ORDER BY totalPostsCreated DESC
          LIMIT 15`,
         [`%${q}%`]
       );
@@ -1805,7 +2229,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       const identifier = String(req.params.id || '').trim();
       const [rows] = await pool.query(
         `SELECT id, username, profilePicture, bio, accountType,
-                totalDropsCreated, totalCreditsEarned, creatorRating, createdAt,
+                totalPostsCreated, totalCreditsEarned, creatorRating, createdAt,
                 bannerUrl, bioVideoUrl, socialLinks,
                 (SELECT COUNT(*) FROM followers WHERE followeeId = userData.id) AS followerCount,
                 (SELECT COUNT(*) FROM followers WHERE followerId = userData.id) AS followingCount
@@ -1841,7 +2265,8 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
         params.push(status);
       }
       const [rows] = await pool.query(
-        `SELECT d.* FROM posts d WHERE ${where} ORDER BY d.created_at DESC LIMIT 50`,
+        `SELECT d.*, (SELECT COUNT(*) FROM postFlags pf WHERE pf.postId = d.id) AS flagCount
+         FROM posts d WHERE ${where} ORDER BY d.created_at DESC LIMIT 50`,
         params
       );
       res.json(rows);
@@ -2006,7 +2431,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       const userId = req.user.id;
 
       // My posts
-      const [myDrops] = await pool.query(
+      const [myPosts] = await pool.query(
         `SELECT * FROM posts WHERE creatorId = ? ORDER BY created_at DESC`, [userId]
       );
 
@@ -2014,9 +2439,9 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       // const [contributed] = await pool.query(
       //   `SELECT d.*, SUM(c.amount) AS myContribution
       //    FROM contributions c
-      //    JOIN posts d ON d.id = c.dropId
+      //    JOIN posts d ON d.id = c.postId
       //    WHERE c.userId = ? AND c.isRefunded = 0
-      //    GROUP BY c.dropId
+      //    GROUP BY c.postId
       //    ORDER BY MAX(c.created_at) DESC`,
       //   [userId]
       // );
@@ -2025,9 +2450,9 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       // const [[stats]] = await pool.query(
       //   `SELECT
       //      (SELECT COALESCE(SUM(amount),0) FROM contributions WHERE userId = ? AND isRefunded = 0) AS totalContributed,
-      //      (SELECT COUNT(DISTINCT dropId) FROM contributions WHERE userId = ? AND isRefunded = 0) AS postsContributedTo,
+      //      (SELECT COUNT(DISTINCT postId) FROM contributions WHERE userId = ? AND isRefunded = 0) AS postsContributedTo,
       //      (SELECT COALESCE(SUM(totalRevenue),0) FROM posts WHERE creatorId = ?) AS totalEarned,
-      //      (SELECT COUNT(*) FROM posts WHERE creatorId = ? AND status != 'removed') AS totalMyDrops,
+      //      (SELECT COUNT(*) FROM posts WHERE creatorId = ? AND status != 'removed') AS totalMyPosts,
       //      (SELECT COUNT(*) FROM postFavorites WHERE userId = ?) AS totalFavorites`,
       //   [userId, userId, userId, userId, userId]
       // );
@@ -2038,8 +2463,8 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
         [userId]
       );
 
-      // res.json({ user, myDrops, contributed, stats });
-      res.json({ user, myDrops });
+      // res.json({ user, myPosts, contributed, stats });
+      res.json({ user, myPosts: serializePosts(req, myPosts) });
     } catch (err) {
       console.error('GET /api/dashboard error:', err);
       res.status(500).json({ error: 'Failed to fetch dashboard' });
@@ -2051,14 +2476,14 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
   //  CONTRIBUTION HISTORY — user's past contributions
   // ============================================================
 
- 
+
 
 
 
 
 
   // ============================================================
-  //  DROP FILE UPLOAD — GCS Signed URL (resumable)
+  //  POST FILE UPLOAD — GCS Signed URL (resumable)
   //
   //  Flow:
   //  1. Client calls POST /api/posts/:id/upload-url with file metadata
@@ -2068,8 +2493,9 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
   //  5. Server verifies the file exists in GCS and updates the DB
   // ============================================================
 
-  // Allowed drop file MIME types
-  const DROP_MIME_TYPES = new Set([
+  // Allowed post file MIME types
+  const POST_MIME_TYPES = new Set([
+    
     // Video
     'video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo',
     // Audio
@@ -2087,6 +2513,9 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
     'application/zip', 'application/x-zip-compressed',
     'application/x-rar-compressed',
     'application/x-7z-compressed',
+    "text/plain",
+    'text/html',
+    'application/json',
     // Apps / Games
     'application/octet-stream',
     'application/x-msdownload',
@@ -2104,13 +2533,13 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       if (!storage) return res.status(503).json({ error: 'Cloud storage not configured' });
 
       const userId = req.user.id;
-      const dropId = req.params.id;
+      const postId = req.params.id;
       const { fileName, fileType, fileSize } = req.body;
 
       if (!fileName || !fileType) {
         return res.status(400).json({ error: 'fileName and fileType are required' });
       }
-      if (!DROP_MIME_TYPES.has(fileType)) {
+      if (!POST_MIME_TYPES.has(fileType)) {
         return res.status(400).json({ error: `Unsupported file type: ${fileType}` });
       }
       const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5 GB
@@ -2119,10 +2548,10 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       }
 
       // Verify ownership
-      const [[drop]] = await pool.query('SELECT creatorId, status FROM posts WHERE id = ?', [dropId]);
-      if (!drop) return res.status(404).json({ error: 'Drop not found' });
-      if (drop.creatorId !== userId) return res.status(403).json({ error: 'Not the creator' });
-      if (!['draft', 'pending'].includes(drop.status)) {
+      const [[post]] = await pool.query('SELECT creatorId, status FROM posts WHERE id = ?', [postId]);
+      if (!post) return res.status(404).json({ error: 'Post not found' });
+      if (post.creatorId !== userId) return res.status(403).json({ error: 'Not the creator' });
+      if (!['draft', 'pending'].includes(post.status)) {
         return res.status(400).json({ error: 'Can only upload files for draft or pending posts' });
       }
 
@@ -2133,23 +2562,22 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
         .replace(/[^A-Za-z0-9._-]/g, '')
         .slice(0, 100);
       const gcsFileName = `${uuidv4()}_${safeBase}${ext}`;
-      const gcsPath = `${DEST_PREFIX}/posts/${userId}/${dropId}/${gcsFileName}`;
+      const gcsPath = `${DEST_PREFIX}/posts/${userId}/${postId}/${gcsFileName}`;
 
-      const bucket = storage.bucket(BUCKET_NAME);
-      const file = bucket.file(gcsPath);
-
-      // Generate a signed resumable-upload URL (15 min expiry)
-      const [signedUrl] = await file.getSignedUrl({
-        version: 'v4',
-        action: 'write',
-        expires: Date.now() + 15 * 60 * 1000,
-        contentType: fileType,
-      });
+      const signedUrl = await signUrl(
+        storage,
+        new PutObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: gcsPath,
+          ContentType: fileType,
+        }),
+        { expiresIn: 15 * 60 }
+      );
 
       // Store the pending path so confirm-upload can verify it
       await pool.query(
         `UPDATE posts SET filePath = ?, mimeType = ?, fileSize = ? WHERE id = ?`,
-        [gcsPath, fileType, fileSize ? +fileSize : null, dropId]
+        [gcsPath, fileType, fileSize ? +fileSize : null, postId]
       );
 
       res.json({
@@ -2179,24 +2607,28 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       if (!storage) return res.status(503).json({ error: 'Cloud storage not configured' });
 
       const userId = req.user.id;
-      const dropId = req.params.id;
+      const postId = req.params.id;
 
-      const [[drop]] = await pool.query(
-        'SELECT creatorId, filePath, status FROM posts WHERE id = ?', [dropId]
+      const [[post]] = await pool.query(
+        'SELECT creatorId, filePath, status FROM posts WHERE id = ?', [postId]
       );
-      if (!drop) return res.status(404).json({ error: 'Drop not found' });
-      if (drop.creatorId !== userId) return res.status(403).json({ error: 'Not the creator' });
-      if (!drop.filePath) return res.status(400).json({ error: 'No upload in progress for this drop' });
+      if (!post) return res.status(404).json({ error: 'Post not found' });
+      if (post.creatorId !== userId) return res.status(403).json({ error: 'Not the creator' });
+      if (!post.filePath) return res.status(400).json({ error: 'No upload in progress for this post' });
 
-      // Verify the file actually exists in GCS
-      const bucket = storage.bucket(BUCKET_NAME);
-      const [exists] = await bucket.file(drop.filePath).exists();
-      if (!exists) {
+      let metadata;
+      try {
+        const head = await storage.send(new HeadObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: normalizeObjectKey(post.filePath),
+        }));
+        metadata = {
+          size: head.ContentLength,
+          contentType: head.ContentType,
+        };
+      } catch (headErr) {
         return res.status(400).json({ error: 'File not found in storage — upload may have failed' });
       }
-
-      // Get actual file metadata from GCS
-      const [metadata] = await bucket.file(drop.filePath).getMetadata();
 
       const updates = {
         fileSize: metadata.size ? +metadata.size : null,
@@ -2207,13 +2639,13 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       }
 
       const sets = Object.keys(updates).map(k => `${k} = ?`).join(', ');
-      await pool.query(`UPDATE posts SET ${sets} WHERE id = ?`, [...Object.values(updates), dropId]);
+      await pool.query(`UPDATE posts SET ${sets} WHERE id = ?`, [...Object.values(updates), postId]);
 
       res.json({
         message: 'Upload confirmed',
         fileSize: updates.fileSize,
         mimeType: updates.mimeType,
-        gcsPath: drop.filePath,
+        gcsPath: post.filePath,
       });
     } catch (err) {
       console.error('POST /api/posts/:id/confirm-upload error:', err);
@@ -2223,7 +2655,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
 
 
   // ============================================================
-  //  DROP FILE DOWNLOAD — Signed download URL
+  //  POST FILE DOWNLOAD — Signed download URL
   //
   //  After a user purchases a download (POST /api/posts/:id/download),
   //  this endpoint returns a short-lived signed URL so the client
@@ -2238,25 +2670,110 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
     try {
       if (!storage) return res.status(503).json({ error: 'Cloud storage not configured' });
 
-      const dropId = req.params.id;
+      const postId = req.params.id;
 
-      const [[drop]] = await pool.query('SELECT filePath, title FROM posts WHERE id = ?', [dropId]);
-      if (!drop || !drop.filePath) return res.status(404).json({ error: 'Drop file not found' });
+      const [[post]] = await pool.query('SELECT filePath, title FROM posts WHERE id = ?', [postId]);
+      if (!post || !post.filePath) return res.status(404).json({ error: 'Post file not found' });
 
-      const bucket = storage.bucket(BUCKET_NAME);
-      const file = bucket.file(drop.filePath);
-
-      const [signedUrl] = await file.getSignedUrl({
-        version: 'v4',
-        action: 'read',
-        expires: Date.now() + 60 * 60 * 1000, // 1 hour
-        responseDisposition: `attachment; filename="${(drop.title || 'download').replace(/"/g, '_')}"`,
-      });
+      const signedUrl = await signUrl(
+        storage,
+        new GetObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: normalizeObjectKey(post.filePath),
+          ResponseContentDisposition: `attachment; filename="${(post.title || 'download').replace(/"/g, '_')}"`,
+        }),
+        { expiresIn: 60 * 60 }
+      );
 
       res.json({ downloadUrl: signedUrl, expiresIn: '1 hour' });
     } catch (err) {
       console.error('GET /api/posts/:id/download-url error:', err);
       res.status(500).json({ error: 'Failed to generate download URL' });
+    }
+  });
+
+  /**
+   * GET /api/posts/:id/thumbnail
+   * Resolves a stored thumbnail key to a short-lived signed URL and redirects to it.
+   */
+  server.get(PROXY + '/api/posts/:id/thumbnail', async (req, res) => {
+    try {
+      const postId = req.params.id;
+      const [[post]] = await pool.query('SELECT thumbnailUrl FROM posts WHERE id = ?', [postId]);
+      if (!post || !post.thumbnailUrl) return res.status(404).json({ error: 'Thumbnail not found' });
+
+      const storedValue = String(post.thumbnailUrl).trim();
+      if (/^https?:\/\//i.test(storedValue)) {
+        return res.redirect(storedValue);
+      }
+
+      if (storedValue.startsWith('/uploads/')) {
+        return res.redirect(buildAbsoluteUrl(req, storedValue));
+      }
+
+      if (!storage) return res.status(503).json({ error: 'Cloud storage not configured' });
+
+      const signedUrl = await signUrl(
+        storage,
+        new GetObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: normalizeObjectKey(storedValue),
+        }),
+        { expiresIn: 5 * 60 }
+      );
+
+      res.set('Cache-Control', 'private, max-age=240');
+      return res.redirect(signedUrl);
+    } catch (err) {
+      console.error('GET /api/posts/:id/thumbnail error:', err);
+      return res.status(500).json({ error: 'Failed to resolve thumbnail' });
+    }
+  });
+
+  /**
+   * POST /api/posts/:id/thumbnail-upload-url
+   * Returns a short-lived signed upload URL for editing a post thumbnail.
+   */
+  server.post(PROXY + '/api/posts/:id/thumbnail-upload-url', authenticateToken, async (req, res) => {
+    try {
+      if (!storage) return res.status(503).json({ error: 'Cloud storage not configured' });
+
+      const postId = req.params.id;
+      const userId = req.user.id;
+      const { fileName, mimeType } = req.body || {};
+
+      if (!mimeType || !String(mimeType).startsWith('image/')) {
+        return res.status(400).json({ error: 'Thumbnail must be an image' });
+      }
+
+      const post = await knex('posts')
+        .select('creatorId', 'status')
+        .where('id', postId)
+        .first();
+
+      if (!post) return res.status(404).json({ error: 'Post not found' });
+      if (post.creatorId !== userId) return res.status(403).json({ error: 'Not the creator' });
+      if (!['draft', 'pending'].includes(post.status)) {
+        return res.status(400).json({ error: 'Can only edit draft or pending posts' });
+      }
+
+      const ext = (String(fileName || '').split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const key = `${DEST_PREFIX}/posts/${post.creatorId}/${postId}/thumbnails/${uuidv4()}.${ext}`;
+
+      const signedUrl = await signUrl(
+        storage,
+        new PutObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: key,
+          ContentType: mimeType,
+        }),
+        { expiresIn: 15 * 60 }
+      );
+
+      res.json({ signedUrl, key });
+    } catch (err) {
+      console.error('POST /api/posts/:id/thumbnail-upload-url error:', err);
+      res.status(500).json({ error: 'Failed to create upload URL' });
     }
   });
 
@@ -2290,7 +2807,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
 
   /**
    * POST /api/posts/:id/banner
-   * Upload a banner/thumbnail image for a drop.
+   * Upload a banner/thumbnail image for a post.
    */
   server.post(
     PROXY + '/api/posts/:id/banner',
@@ -2299,35 +2816,39 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
     async (req, res) => {
       try {
         const userId = req.user.id;
-        const dropId = req.params.id;
+        const postId = req.params.id;
 
-        const [[drop]] = await pool.query('SELECT creatorId, status FROM posts WHERE id = ?', [dropId]);
-        if (!drop) return res.status(404).json({ error: 'Drop not found' });
-        if (drop.creatorId !== userId) return res.status(403).json({ error: 'Not the creator' });
+        const [[post]] = await pool.query('SELECT creatorId, status FROM posts WHERE id = ?', [postId]);
+        if (!post) return res.status(404).json({ error: 'Post not found' });
+        if (post.creatorId !== userId) return res.status(403).json({ error: 'Not the creator' });
 
         if (!req.file) return res.status(400).json({ error: 'No banner file provided' });
 
-        // If GCS is available, upload to cloud; otherwise serve locally
+        // If cloud storage is available, upload to R2; otherwise serve locally
         let thumbnailUrl;
         if (storage) {
           const ext = path.extname(req.file.originalname) || '.jpg';
           const gcsPath = `${DEST_PREFIX}/banners/${userId}/${uuidv4()}${ext}`;
-          const bucket = storage.bucket(BUCKET_NAME);
-          await bucket.upload(req.file.path, {
-            destination: gcsPath,
-            metadata: { contentType: req.file.mimetype },
-          });
-          await bucket.file(gcsPath).makePublic().catch(() => {});
-          thumbnailUrl = `https://storage.googleapis.com/${BUCKET_NAME}/${encodeURI(gcsPath)}`;
+          await storage.send(new PutObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: gcsPath,
+            Body: fs.readFileSync(req.file.path),
+            ContentType: req.file.mimetype,
+          }));
+          thumbnailUrl = gcsPath;
           // Clean up local temp file
-          fs.unlink(req.file.path, () => {});
+          fs.unlink(req.file.path, () => { });
         } else {
           thumbnailUrl = `/uploads/banners/${userId}/${req.file.filename}`;
         }
 
-        await pool.query('UPDATE posts SET thumbnailUrl = ? WHERE id = ?', [thumbnailUrl, dropId]);
+        await pool.query('UPDATE posts SET thumbnailUrl = ? WHERE id = ?', [thumbnailUrl, postId]);
 
-        res.json({ message: 'Banner uploaded', thumbnailUrl });
+        res.json({
+          message: 'Banner uploaded',
+          thumbnailKey: thumbnailUrl,
+          thumbnailUrl: resolveThumbnailUrl(req, postId, thumbnailUrl),
+        });
       } catch (err) {
         console.error('POST /api/posts/:id/banner error:', err);
         res.status(500).json({ error: 'Banner upload failed' });
@@ -2471,19 +2992,19 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
   server.get(PROXY + '/api/history/earnings', authenticateToken, async (req, res) => {
     try {
       const [rows] = await pool.query(
-        `SELECT wt.id, wt.amount, wt.balanceAfter, wt.relatedDropId, wt.description, wt.created_at,
-                d.title AS dropTitle
+        `SELECT wt.id, wt.amount, wt.balanceAfter, wt.relatedPostId, wt.description, wt.created_at,
+                d.title AS postTitle
          FROM walletTransactions wt
-         LEFT JOIN posts d ON d.id = wt.relatedDropId
+         LEFT JOIN posts d ON d.id = wt.relatedPostId
          WHERE wt.userId = ? AND wt.type = 'creator_earning'
          ORDER BY wt.created_at DESC
          LIMIT 200`,
         [req.user.id]
       );
-      
+
       // Calculate total earnings
       const totalEarned = rows.reduce((sum, row) => sum + (row.amount || 0), 0);
-      
+
       res.json({ earnings: rows, totalEarned });
     } catch (err) {
       console.error('GET /api/history/earnings error:', err);
@@ -2516,4 +3037,5 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
     }
   });
 
-  console.log('✅ Prolifer8 routes loaded')};
+  console.log('✅ Prolifer8 routes loaded')
+};

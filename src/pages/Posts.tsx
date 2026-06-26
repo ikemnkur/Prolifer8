@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
+import { censorTitle, isMatureContent } from '../lib/contentSafety';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { useWatchedPosts } from '../hooks/useWatchedPosts';
@@ -9,7 +10,7 @@ import { loadTagProfile, scoreByTagAffinity } from '../lib/tagProfile';
 import type { Drop, Review } from '../types';
 import ReviewForm from '../components/ReviewForm';
 import ShareModal from '../components/ShareModal';
-import { ChevronDown, ChevronUp, Eye, MessageCircle, PlusCircle, Send, Share2, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, Copy, Eye, ExternalLink, Flag, MessageCircle, PlusCircle, Send, Share2, Star, DollarSignIcon, ThumbsDown, ThumbsUp, X } from 'lucide-react';
 
 type FilePayload = {
   fileUrl: string;
@@ -26,6 +27,15 @@ type ServerReview = {
   rating: number;
   effortRating?: number | null;
   liked: boolean | null;
+  created_at: string;
+};
+
+type ServerTip = {
+  id: string;
+  senderUserId: string;
+  senderUsername: string;
+  amount: number;
+  message: string | null;
   created_at: string;
 };
 
@@ -48,6 +58,7 @@ type MoreItemKind = 'related' | 'recommended' | 'boosted' | 'ad' | 'random';
 type MoreRailItem =
   | { kind: 'ad'; id: string }
   | { kind: Exclude<MoreItemKind, 'ad'>; id: string; post: Drop };
+type PostFlagReason = 'spam' | 'scam' | 'explicit' | 'abuse' | 'plagiarism' | 'impersonation';
 
 function getUserProfilePath(username?: string | null, userId?: string | null): string {
   const identifier = String(username || userId || '').trim();
@@ -493,7 +504,7 @@ export default function Posts() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { drops } = useApp();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user, updateBalance } = useAuth();
   const { isAlreadyWatched, markAsWatched } = useWatchedPosts();
 
   const localDrop = drops.find((d) => d.id === id);
@@ -504,7 +515,28 @@ export default function Posts() {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [reviewError, setReviewError] = useState('');
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [creatorReviewModalOpen, setCreatorReviewModalOpen] = useState(false);
   const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [tipModalOpen, setTipModalOpen] = useState(false);
+  const [creatorTipsModalOpen, setCreatorTipsModalOpen] = useState(false);
+  const [creatorTips, setCreatorTips] = useState<ServerTip[]>([]);
+  const [creatorTipsLoading, setCreatorTipsLoading] = useState(false);
+  const [creatorTipsError, setCreatorTipsError] = useState('');
+  const [creatorTipsTotal, setCreatorTipsTotal] = useState(0);
+  const [tipAmount, setTipAmount] = useState('25');
+  const [tipMessage, setTipMessage] = useState('');
+  const [tipSubmitting, setTipSubmitting] = useState(false);
+  const [tipError, setTipError] = useState('');
+  const [tipSuccess, setTipSuccess] = useState('');
+  const [flagModalOpen, setFlagModalOpen] = useState(false);
+  const [flagReason, setFlagReason] = useState<PostFlagReason>('spam');
+  const [flagSubmitting, setFlagSubmitting] = useState(false);
+  const [flagError, setFlagError] = useState('');
+  const [flagMessage, setFlagMessage] = useState('');
+  const [flagExplanation, setFlagExplanation] = useState('');
+  const [flagEvidenceUrl, setFlagEvidenceUrl] = useState('');
+  const [flagAcknowledge, setFlagAcknowledge] = useState(false);
+  
   const [postReaction, setPostReaction] = useState<'like' | 'dislike' | null>(null);
   const [reactionCounts, setReactionCounts] = useState({ likeCount: 0, dislikeCount: 0 });
   const [viewCount, setViewCount] = useState(0);
@@ -515,8 +547,10 @@ export default function Posts() {
   const [commentError, setCommentError] = useState('');
   const [commentsExpanded, setCommentsExpanded] = useState(true);
   const [commentModalOpen, setCommentModalOpen] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const drop = localDrop ?? fetchedDrop;
+  const isCreator = Boolean(user?.id && drop?.creatorId && user.id === drop.creatorId);
 
   useEffect(() => {
     
@@ -668,7 +702,7 @@ export default function Posts() {
     const profile = loadTagProfile();
 
     const eligible = drops.filter(
-      (p) => p.id !== drop.id && p.isPublic && !['removed', 'draft', 'hidden'].includes(p.status)
+      (p) => p.id !== drop.id && p.isPublic && !['removed', 'draft', 'hidden'].includes(p.status) && Number(p.flagCount || 0) < 5
     );
 
     const relatedPool = eligible
@@ -775,6 +809,57 @@ export default function Posts() {
     }
   };
 
+  const handleSubmitTip = async () => {
+    if (!id) return;
+    if (!isAuthenticated) {
+      navigate(`/login?redirect=/post/${id}`);
+      return;
+    }
+
+    const amount = Number(tipAmount);
+    const message = tipMessage.trim();
+    if (!Number.isInteger(amount) || amount <= 0) {
+      setTipError('Please enter a whole number amount greater than zero.');
+      return;
+    }
+    if (message.length > 500) {
+      setTipError('Tip message must be 500 characters or less.');
+      return;
+    }
+
+    setTipSubmitting(true);
+    setTipError('');
+    setTipSuccess('');
+    try {
+      const res = await api.post<{ senderBalance?: number }>(`/api/posts/${id}/tip`, { amount, message });
+      if (typeof res.senderBalance === 'number') {
+        updateBalance(res.senderBalance);
+      }
+      setTipSuccess('Tip sent successfully. Thanks for supporting the creator.');
+      setTipModalOpen(false);
+      setTipMessage('');
+    } catch (err) {
+      setTipError(err instanceof Error ? err.message : 'Failed to send tip');
+    } finally {
+      setTipSubmitting(false);
+    }
+  };
+
+  const loadCreatorTips = async () => {
+    if (!id || !isCreator) return;
+    setCreatorTipsLoading(true);
+    setCreatorTipsError('');
+    try {
+      const res = await api.get<{ tips?: ServerTip[]; totalTips?: number }>(`/api/posts/${id}/tips`);
+      setCreatorTips(res.tips || []);
+      setCreatorTipsTotal(Number(res.totalTips || 0));
+    } catch (err) {
+      setCreatorTipsError(err instanceof Error ? err.message : 'Failed to load tips');
+    } finally {
+      setCreatorTipsLoading(false);
+    }
+  };
+
   const refreshComments = async () => {
     if (!id) return;
     try {
@@ -867,6 +952,55 @@ export default function Posts() {
     }
   };
 
+  const handleSubmitFlag = async () => {
+    if (!id) return;
+    if (!isAuthenticated) {
+      navigate(`/login?redirect=/post/${id}`);
+      return;
+    }
+
+    const explanation = flagExplanation.trim();
+    if (explanation.length < 60 || explanation.length > 900) {
+      setFlagError('Please provide an explanation between 60 and 900 characters.');
+      return;
+    }
+    const evidenceUrl = flagEvidenceUrl.trim();
+    if (evidenceUrl && !/^https?:\/\//i.test(evidenceUrl)) {
+      setFlagError('Evidence URL must start with http:// or https://');
+      return;
+    }
+    if (!flagAcknowledge) {
+      setFlagError('Please confirm the report is accurate before submitting.');
+      return;
+    }
+
+    setFlagSubmitting(true);
+    setFlagError('');
+    setFlagMessage('');
+    try {
+      const res = await api.post<{ flagCount: number; hiddenFromExplore: boolean; hiddenFromRecommendations: boolean }>(
+        `/api/posts/${id}/flag`,
+        { reason: flagReason, description: explanation, evidenceUrl }
+      );
+      const count = Number(res.flagCount || 0);
+      if (count >= 5) {
+        setFlagMessage('Thanks. This post now has enough flags to be hidden from Explore and recommendations.');
+      } else if (count >= 3) {
+        setFlagMessage('Thanks. This post now has enough flags to be hidden from Explore.');
+      } else {
+        setFlagMessage('Thanks for the report. Our team will review this post.');
+      }
+      setFlagModalOpen(false);
+      setFlagExplanation('');
+      setFlagEvidenceUrl('');
+      setFlagAcknowledge(false);
+    } catch (err) {
+      setFlagError(err instanceof Error ? err.message : 'Failed to submit flag');
+    } finally {
+      setFlagSubmitting(false);
+    }
+  };
+
   if (loading) {
     return <div className="py-20 text-center text-text-muted">Loading post...</div>;
   }
@@ -892,12 +1026,33 @@ export default function Posts() {
     originalFileName: filePayload?.originalFileName || drop.originalFileName,
   });
   const resolvedFileUrl = filePayload?.fileUrl || null;
-  const externalLinkUrl = drop.filePath && /^https?:\/\//i.test(drop.filePath) ? drop.filePath : null;
+  const externalLinkUrl =
+    (drop.link && /^https?:\/\//i.test(drop.link) ? drop.link : null) ||
+    (drop.filePath && /^https?:\/\//i.test(drop.filePath) ? drop.filePath : null);
+
+  const copyExternalLink = async () => {
+    if (!externalLinkUrl) return;
+    try {
+      await navigator.clipboard.writeText(externalLinkUrl);
+      setCopiedLink(true);
+      window.setTimeout(() => setCopiedLink(false), 1500);
+    } catch {
+      // Clipboard write can fail on unsupported contexts.
+    }
+  };
+
+  const handleTagClick = (tag: string) => {
+    // Implement tag click behavior, e.g., navigate to a tag-specific page
+    // console.log(`Tag clicked: ${tag}`);
+    // open new window with "/explore" with the search results for the clicked tag
+    window.open(`/explore?tag=${encodeURIComponent(tag)}`, '_blank');
+  };
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div className="space-y-2">
         <h1 className="text-2xl font-bold text-text">{drop.title}</h1>
+        {flagMessage && <p className="text-xs text-amber-300">{flagMessage}</p>}
         <div className="flex items-center gap-3 text-sm text-text-muted">
           <Link
             to={getUserProfilePath(drop.creatorName, drop.creatorId)}
@@ -926,12 +1081,39 @@ export default function Posts() {
           <AudioWaveformPlayer src={resolvedFileUrl} thumbnailUrl={drop.thumbnailUrl} title={drop.title} />
         ) : resolvedFileUrl && mediaKind === 'image' ? (
           <ImageZoomPanViewer src={resolvedFileUrl} alt={drop.title} />
-        ) : mediaKind === 'link' && externalLinkUrl ? (
-          <div className="space-y-4 p-6 text-sm text-text-muted">
+        ) : (drop.fileType === 'link' || mediaKind === 'link') && externalLinkUrl ? (
+        
+          <div className="space-y-4 p-6 text-sm text-text-muted">  
+          <img src={drop.thumbnailUrl || 'https://via.placeholder.com/600x400?text=No+Preview'} alt={drop.title} className="max-h-[360px] w-full rounded-xl object-cover" />
             <p>This post points to an external link.</p>
-            <a href={externalLinkUrl} target="_blank" rel="noreferrer" className="inline-flex rounded-lg bg-brand px-3 py-2 text-white no-underline hover:bg-brand-dark">
-              Open Link
+            <a
+              href={externalLinkUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="block truncate rounded-lg border border-surface-3 bg-surface px-3 py-2 text-text no-underline"
+              title={externalLinkUrl}
+            >
+              {externalLinkUrl}
             </a>
+            <div className="flex flex-wrap gap-2">
+              <a
+                href={externalLinkUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 rounded-lg bg-brand px-3 py-2 font-medium text-white no-underline hover:bg-brand-dark"
+              >
+                <ExternalLink className="h-4 w-4" />
+                Visit Link
+              </a>
+              <button
+                type="button"
+                onClick={copyExternalLink}
+                className="inline-flex items-center gap-2 rounded-lg border border-surface-3 px-3 py-2 text-text-muted transition hover:text-text"
+              >
+                {copiedLink ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {copiedLink ? 'Copied' : 'Copy Link'}
+              </button>
+            </div>
           </div>
         ) : mediaKind === 'file' ? (
           <div className="space-y-4 p-6">
@@ -967,7 +1149,20 @@ export default function Posts() {
         )}
       </div>
 
-      <p className="text-sm leading-relaxed text-text-muted">{drop.description}</p>
+      <p className="text-md leading-relaxed text-text-muted">{drop.description}</p>
+
+      <div className="my-4">
+        {/* <TagsIcon /> */}
+        Tags: {" "}
+        {drop.tags.map((tag) => (
+          <span key={tag} 
+          onClick={() => handleTagClick(tag)}
+          className="mr-2 text-sm text-text-muted"
+          style={{ cursor: 'pointer', padding: '2px 4px', backgroundColor: 'rgba(0,0,0,0.25)'  }}>
+            #{tag}
+          </span>
+        ))}
+      </div>
 
       <div className="flex flex-wrap gap-2">
         <button
@@ -984,6 +1179,7 @@ export default function Posts() {
           <ThumbsUp className="h-4 w-4" />
           <span className="text-xs">{reactionCounts.likeCount > 0 ? reactionCounts.likeCount : ''}</span>
         </button>
+        {/* Dislike button */}
         <button
           type="button"
           onClick={() => handleReactPost('dislike')}
@@ -998,23 +1194,63 @@ export default function Posts() {
           <ThumbsDown className="h-4 w-4" />
           <span className="text-xs">{reactionCounts.dislikeCount > 0 ? reactionCounts.dislikeCount : ''}</span>
         </button>
+        {/* Share button */}
         <button
           type="button"
           onClick={() => setShareModalOpen(true)}
           title="Share post"
           aria-label="Share post"
-          className="inline-flex items-center gap-2 rounded-lg border border-surface-3 px-3 py-2 text-sm text-text-muted transition hover:text-brand"
+          className="inline-flex items-center gap-2 rounded-lg border border-surface-3 px-3 py-2 text-sm text-text-muted transition hover:text-brand disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Share2 className="h-4 w-4" />
         </button>
+        {/* Review button */}
         <button
           type="button"
-          onClick={() => setReviewModalOpen(true)}
-          title="Write review"
-          aria-label="Write review"
+          onClick={() => {
+            if (isCreator) {
+              setCreatorReviewModalOpen(true);
+            } else {
+              setReviewModalOpen(true);
+            }
+          }}
+          title={isCreator ? 'View formal reviews' : 'Write review'}
+          aria-label={isCreator ? 'View formal reviews' : 'Write review'}
           className="inline-flex items-center gap-2 rounded-lg border border-surface-3 px-3 py-2 text-sm text-text-muted transition hover:text-brand"
         >
           <Star className="h-4 w-4" />
+        </button>
+        {/* Tip button */}
+        <button
+          type="button"
+          onClick={async () => {
+            if (isCreator) {
+              await loadCreatorTips();
+              setCreatorTipsModalOpen(true);
+              return;
+            }
+            setTipError('');
+            setTipSuccess('');
+            setTipModalOpen(true);
+          }}
+          title={isCreator ? 'View tips received' : 'Tip post'}
+          aria-label={isCreator ? 'View tips received' : 'Tip post'}
+          className="inline-flex items-center gap-2 rounded-lg border border-surface-3 px-3 py-2 text-sm text-text-muted transition hover:text-brand"
+        >
+          <DollarSignIcon className="h-4 w-4" />
+        </button>
+        {/* Flag Post Button */}
+        <button
+          type="button"
+          onClick={() => {
+            setFlagError('');
+            setFlagModalOpen(true);
+          }}
+          title="Flag post"
+          aria-label="Flag post"
+          className="inline-flex items-center gap-2 rounded-lg border border-surface-3 px-3 py-2 text-sm text-text-muted transition hover:text-brand"
+        >
+          <Flag className="h-4 w-4" />
         </button>
 
 
@@ -1120,9 +1356,14 @@ export default function Posts() {
                   <img
                     src={item.post.thumbnailUrl || `https://picsum.photos/seed/${item.post.id}/300/220`}
                     alt={item.post.title}
-                    className="h-20 w-full object-cover transition group-hover:opacity-90"
+                    className={`h-20 w-full object-cover transition group-hover:opacity-90 ${isMatureContent(item.post.mature) ? 'blur-sm saturate-50 brightness-75' : ''}`}
                   />
-                  <p className="truncate px-2 py-1 text-[11px] text-text-muted">{item.post.title}</p>
+                  <p className="truncate px-2 py-1 text-[11px] text-text-muted">{censorTitle(item.post.title, isMatureContent(item.post.mature))}</p>
+                  {isMatureContent(item.post.mature) && (
+                    <span className="absolute left-1.5 top-1.5 z-10 rounded-full border border-white/20 bg-black/55 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white backdrop-blur-sm">
+                      Mature
+                    </span>
+                  )}
                 </Link>
               );
             })}
@@ -1143,6 +1384,152 @@ export default function Posts() {
             </div>
             <ReviewForm onSubmit={handleSubmitReview} />
             {reviewError && <p className="mt-3 text-xs text-danger">{reviewError}</p>}
+          </div>
+        </div>
+      )}
+
+      {creatorReviewModalOpen && isCreator && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-auto rounded-2xl border border-surface-3 bg-surface p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-text">Formal Reviews On Your Post</h3>
+              <button type="button" onClick={() => setCreatorReviewModalOpen(false)} className="text-text-muted hover:text-text">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {reviews.length === 0 ? (
+              <p className="rounded-lg border border-surface-3 bg-surface-2 px-4 py-3 text-sm text-text-muted">No formal reviews yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {reviews.map((r) => (
+                  <article key={r.id} className="rounded-lg border border-surface-3 bg-surface-2 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-text">{r.username}</p>
+                      <p className="text-xs text-text-muted">{new Date(r.timestamp).toLocaleString()}</p>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-text-muted">
+                      <span>Quality: <span className="font-mono text-text">{r.rating}%</span></span>
+                      <span>Effort: <span className="font-mono text-text">{typeof r.effortRating === 'number' ? `${r.effortRating}%` : 'n/a'}</span></span>
+                      <span>
+                        Verdict: <span className="font-semibold text-text">{r.liked === null ? 'Neutral' : r.liked ? 'Liked' : 'Disliked'}</span>
+                      </span>
+                    </div>
+                    <p className="mt-2 whitespace-pre-wrap text-sm text-text-muted">{r.comment}</p>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {creatorTipsModalOpen && isCreator && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-auto rounded-2xl border border-surface-3 bg-surface p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-text">Tips Received On This Post</h3>
+              <button type="button" onClick={() => setCreatorTipsModalOpen(false)} className="text-text-muted hover:text-text">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="mb-3 flex items-center justify-between rounded-lg border border-surface-3 bg-surface-2 px-3 py-2 text-sm text-text-muted">
+              <span>Total received</span>
+              <span className="font-semibold text-text">{creatorTipsTotal.toLocaleString()} credits</span>
+            </div>
+
+            {creatorTipsLoading ? (
+              <p className="rounded-lg border border-surface-3 bg-surface-2 px-4 py-3 text-sm text-text-muted">Loading tips...</p>
+            ) : creatorTipsError ? (
+              <p className="rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{creatorTipsError}</p>
+            ) : creatorTips.length === 0 ? (
+              <p className="rounded-lg border border-surface-3 bg-surface-2 px-4 py-3 text-sm text-text-muted">No tips received on this post yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {creatorTips.map((t) => (
+                  <article key={t.id} className="rounded-lg border border-surface-3 bg-surface-2 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-text">{t.senderUsername}</p>
+                      <p className="text-xs text-text-muted">{new Date(t.created_at).toLocaleString()}</p>
+                    </div>
+                    <div className="mt-1 text-xs text-text-muted">
+                      Amount: <span className="font-semibold text-text">{Number(t.amount || 0).toLocaleString()} credits</span>
+                    </div>
+                    {t.message && <p className="mt-2 whitespace-pre-wrap text-sm text-text-muted">{t.message}</p>}
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tipModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-surface-3 bg-surface p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-text">Tip The Creator</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setTipModalOpen(false);
+                  setTipError('');
+                }}
+                className="text-text-muted hover:text-text"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <p className="mb-3 text-sm text-text-muted">Send credits directly to the creator of this post.</p>
+
+            <div className="space-y-2">
+              <label className="block text-xs text-text-muted">Amount (credits)</label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={tipAmount}
+                onChange={(e) => setTipAmount(e.target.value)}
+                className="w-full rounded-lg border border-surface-3 bg-surface-2 px-3 py-2 text-sm text-text-muted focus:border-brand focus:outline-none"
+              />
+            </div>
+
+            <div className="mt-3 space-y-2">
+              <label className="block text-xs text-text-muted">Message (optional, max 500 chars)</label>
+              <textarea
+                rows={4}
+                maxLength={500}
+                value={tipMessage}
+                onChange={(e) => setTipMessage(e.target.value)}
+                placeholder="Thanks for the post. Keep creating."
+                className="w-full resize-none rounded-lg border border-surface-3 bg-surface-2 px-3 py-2 text-sm text-text-muted focus:border-brand focus:outline-none"
+              />
+              <div className="text-right text-[11px] text-text-muted">{tipMessage.trim().length} / 500</div>
+            </div>
+
+            {tipError && <p className="mt-3 text-xs text-danger">{tipError}</p>}
+            {tipSuccess && <p className="mt-3 text-xs text-success">{tipSuccess}</p>}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setTipModalOpen(false)}
+                className="rounded-lg border border-surface-3 px-3 py-2 text-sm text-text-muted transition hover:text-text"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmitTip}
+                disabled={tipSubmitting || Number(tipAmount) <= 0}
+                className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <DollarSignIcon className="h-4 w-4" />
+                {tipSubmitting ? 'Sending...' : 'Send Tip'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1197,6 +1584,118 @@ export default function Posts() {
               >
                 <Send className="h-4 w-4" />
                 Post
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {flagModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-2xl border border-surface-3 bg-surface p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-text">Flag This Post</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setFlagModalOpen(false);
+                  setFlagError('');
+                }}
+                className="text-text-muted hover:text-text"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <p className="mb-3 text-sm text-text-muted">Select one reason for this report:</p>
+            <div className="space-y-2">
+              {[
+                { value: 'spam', label: 'Spam' },
+                { value: 'scam', label: 'Scam' },
+                { value: 'explicit', label: 'Explicit' },
+                { value: 'abuse', label: 'Abuse' },
+                { value: 'plagiarism', label: 'Plagiarism' },
+                { value: 'impersonation', label: 'Impersonation' },
+              ].map((reason) => (
+                <label
+                  key={reason.value}
+                  className="flex items-center gap-2 rounded-lg border border-surface-3 bg-surface-2 px-3 py-2 text-sm text-text-muted"
+                >
+                  <input
+                    type="radio"
+                    name="post-flag-reason"
+                    value={reason.value}
+                    checked={flagReason === reason.value}
+                    onChange={() => setFlagReason(reason.value as PostFlagReason)}
+                    className="h-4 w-4"
+                  />
+                  <span>{reason.label}</span>
+                </label>
+              ))}
+              <p className="pt-2 text-xs text-text-muted">
+                Explain why this post should be flagged. Minimum 60 characters, maximum 900.
+              </p>
+              <textarea
+                minLength={60}
+                maxLength={900}
+                value={flagExplanation}
+                onChange={(e) => setFlagExplanation(e.target.value)}
+                placeholder="Explain what you saw and why this should be reviewed..."
+                className="mt-2 w-full rounded-lg border border-surface-3 bg-surface-2 px-3 py-2 text-sm text-text-muted focus:border-brand focus:outline-none"
+              />
+              <input
+                type="url"
+                value={flagEvidenceUrl}
+                onChange={(e) => setFlagEvidenceUrl(e.target.value)}
+                placeholder="Optional evidence URL (https://...)"
+                className="mt-2 w-full rounded-lg border border-surface-3 bg-surface-2 px-3 py-2 text-sm text-text-muted focus:border-brand focus:outline-none"
+              />
+              <label className="mt-2 inline-flex items-center gap-2 text-xs text-text-muted">
+                <input
+                  type="checkbox"
+                  checked={flagAcknowledge}
+                  onChange={(e) => setFlagAcknowledge(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                I confirm this report is accurate to the best of my knowledge.
+              </label>
+              <div className="flex items-center justify-between text-[11px] text-text-muted">
+                <span>{flagExplanation.trim().length} / 900</span>
+                <span>{flagExplanation.trim().length < 60 ? `${60 - flagExplanation.trim().length} more characters required` : 'Ready to submit'}</span>
+              </div>
+              <div className="rounded-lg border border-surface-3 bg-surface-2 px-3 py-2 text-[11px] text-text-muted">
+                <p>Moderation thresholds:</p>
+                <p>3+ flags: hidden from Explore</p>
+                <p>5+ flags: hidden from recommendations</p>
+              </div>
+            </div>
+
+            {flagError && <p className="mt-3 text-xs text-danger">{flagError}</p>}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setFlagModalOpen(false);
+                  setFlagError('');
+                }}
+                className="rounded-lg border border-surface-3 px-3 py-2 text-sm text-text-muted transition hover:text-text"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmitFlag}
+                disabled={
+                  flagSubmitting
+                  || !flagAcknowledge
+                  || flagExplanation.trim().length < 60
+                  || flagExplanation.trim().length > 900
+                }
+                className="inline-flex items-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Flag className="h-4 w-4" />
+                {flagSubmitting ? 'Submitting...' : 'Submit Flag'}
               </button>
             </div>
           </div>

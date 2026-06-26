@@ -22,7 +22,8 @@ const FILE_TYPE_OPTIONS = [
   { value: 'document', label: 'Text / Doc' },
   { value: 'game', label: 'Game' },
   { value: 'app', label: 'App' },
-  { value: 'other', label: 'Link / Other' },
+  { value: 'link', label: 'Link' },
+  { value: 'other', label: 'Other' },
 ] as const;
 
 type FileTypeOption = (typeof FILE_TYPE_OPTIONS)[number]['value'];
@@ -38,6 +39,7 @@ export default function CreatePost() {
   const [title, setTitle] = useState('');
   const [summary, setSummary] = useState('');
   const [fileType, setFileType] = useState<FileTypeOption>('image');
+  const [isMature, setIsMature] = useState(false);
   const [tagInput, setTagInput] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [goalAmount, setGoalAmount] = useState('');
@@ -102,7 +104,7 @@ export default function CreatePost() {
     e.dataTransfer.dropEffect = 'copy';
   };
 
-  const handleFileDrop = (e: React.DragEvent<HTMLElement>) => {
+  const handleFilePost = (e: React.DragEvent<HTMLElement>) => {
     e.preventDefault();
     setIsFileDragActive(false);
     const f = e.dataTransfer.files?.[0];
@@ -111,7 +113,7 @@ export default function CreatePost() {
     assignPostFile(f);
   };
 
-  const handleThumbnailDrop = (e: React.DragEvent<HTMLElement>) => {
+  const handleThumbnailPost = (e: React.DragEvent<HTMLElement>) => {
     e.preventDefault();
     setIsThumbnailDragActive(false);
     const f = e.dataTransfer.files?.[0];
@@ -136,7 +138,7 @@ export default function CreatePost() {
     }
   };
 
-  const allowsLinkOnly = ['game', 'app', 'document', 'other'].includes(fileType);
+  const allowsLinkOnly = ['game', 'app', 'document', 'other', 'link'].includes(fileType);
   const canSubmit = title.trim() && summary.trim() && !submitting && (fileName || (allowsLinkOnly && linkUrl.trim()));
 
   useEffect(() => {
@@ -193,24 +195,26 @@ export default function CreatePost() {
       // const scheduledDropTime = new Date(now + durationMs).toISOString();
       const expiresAt = new Date(now + durationMs + 2 * 24 * 60 * 60 * 1000).toISOString();
 
-      // 1. Create the drop record
+      // 1. Create the post record
       setUploadStep('Creating drop…');
-      const { id: dropId } = await api.post<{ id: string; message: string }>('/api/posts', {
+      const { id: postId } = await api.post<{ id: string; message: string }>('/api/posts', {
         title: title.trim(),
         description: summary.trim(),
         fileType,
         tags,
+        mature: isMature,
         goalAmount: Number(goalAmount),
         basePrice: Number(basePrice),
-        // scheduledDropTime,
+        // scheduledPostTime,
         expiresAt,
         trailerUrl: trailerUrl.trim() || null,
+        link: fileType === 'link' ? linkUrl.trim() || null : null,
         externalUrl: linkUrl.trim() || null,
         expiryBehaviour: isPremium ? expiryBehaviour : 'refund',
         expiryThreshold: (isPremium && expiryBehaviour === 'keep' && expiryThreshold > 0) ? expiryThreshold / 100 : null,
       });
 
-      setCreatedPostId(dropId);
+      setCreatedPostId(postId);
 
       // 2. Upload thumbnail if selected
       if (thumbnailFile) {
@@ -218,35 +222,35 @@ export default function CreatePost() {
         const token = localStorage.getItem('prolifer8_token');
         const form = new FormData();
         form.append('banner', thumbnailFile);
-        await fetch(`${API_BASE}/api/posts/${dropId}/banner`, {
+        await fetch(`${API_BASE}/api/posts/${postId}/banner`, {
           method: 'POST',
           headers: token ? { Authorization: `Bearer ${token}` } : {},
           body: form,
         });
       }
 
-      // 3. Upload the post file to GCS
+      // 3. Upload the post file to object storage
       if (postFile) {
         const mimeType = postFileMime || 'application/octet-stream';
 
         setUploadStep('Preparing upload…');
         const { uploadUrl } = await api.post<{ uploadUrl: string; gcsPath: string }>(
-          `/api/posts/${dropId}/upload-url`,
+          `/api/posts/${postId}/upload-url`,
           { fileName: postFile.name, fileType: mimeType, fileSize: postFile.size }
         );
 
         setUploadStep('Uploading file…');
-        await uploadToGCS(uploadUrl, postFile, mimeType, setUploadProgress);
+        await uploadToStorage(uploadUrl, postFile, mimeType, setUploadProgress);
 
         setUploadStep('Confirming upload…');
-        await api.post(`/api/posts/${dropId}/confirm-upload`, {
+        await api.post(`/api/posts/${postId}/confirm-upload`, {
           originalFileName: postFile.name,
         });
       }
 
       // 4. Publish (draft → pending)
       setUploadStep('Publishing…');
-      await api.post(`/api/posts/${dropId}/publish`);
+      await api.post(`/api/posts/${postId}/publish`);
 
       setSubmitted(true);
     } catch (err: unknown) {
@@ -315,9 +319,24 @@ export default function CreatePost() {
         <h1 className="text-2xl font-bold text-text">Create a Post</h1>
       </div>
 
+      <label className="mb-6 flex items-start gap-3 rounded-xl border border-surface-3 bg-surface-2 px-4 py-3">
+        <input
+          type="checkbox"
+          checked={isMature}
+          onChange={(e) => setIsMature(e.target.checked)}
+          className="mt-1 h-4 w-4 rounded border-surface-3 text-brand focus:ring-brand"
+        />
+        <span className="text-sm text-text-muted">
+          Mark this post as mature. Mature posts will be blurred in Explore and More Posts, and common cuss words in the title will be censored.
+        </span>
+      </label>
+
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* ── File Upload ── */}
         <section className="bg-surface rounded-2xl border border-surface-3 p-5 space-y-4">
+         
+         {fileType !== 'link' && (
+          <>
           <h2 className="text-sm font-semibold text-text-muted uppercase tracking-wider flex items-center gap-2">
             <Upload className="w-4 h-4" /> File
           </h2>
@@ -333,12 +352,11 @@ export default function CreatePost() {
             onDragEnter={() => setIsFileDragActive(true)}
             onDragOver={handleDragOver}
             onDragLeave={() => setIsFileDragActive(false)}
-            onDrop={handleFileDrop}
-            className={`w-full border-2 border-dashed rounded-xl p-8 flex flex-col items-center gap-2 text-text-muted transition group ${
-              isFileDragActive
-                ? 'border-brand bg-brand/5 text-brand'
-                : 'border-surface-3 hover:border-brand/50 hover:text-brand'
-            }`}
+            onDrop={handleFilePost}
+            className={`w-full border-2 border-dashed rounded-xl p-8 flex flex-col items-center gap-2 text-text-muted transition group ${isFileDragActive
+              ? 'border-brand bg-brand/5 text-brand'
+              : 'border-surface-3 hover:border-brand/50 hover:text-brand'
+              }`}
           >
             <Upload className="w-8 h-8 group-hover:scale-110 transition-transform" />
             {fileName ? (
@@ -350,6 +368,8 @@ export default function CreatePost() {
               <p className="text-sm">Click or drag a file here to post</p>
             )}
           </button>
+          </>
+         )}
 
           {postFile && (
             <div className="overflow-hidden rounded-2xl border border-surface-3 bg-surface-2">
@@ -390,20 +410,38 @@ export default function CreatePost() {
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1  gap-4">
             <div>
               <label className="block text-xs text-text-muted mb-1.5">File Type</label>
-              <select
-                value={fileType}
-                onChange={(e) => setFileType(e.target.value as FileTypeOption)}
-                className="w-full bg-surface-2 border border-surface-3 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-brand"
-              >
-                {FILE_TYPE_OPTIONS.map((ft) => (
-                  <option key={ft.value} value={ft.value}>
-                    {ft.label}
-                  </option>
-                ))}
-              </select>
+              
+                <select
+                  value={fileType}
+                  onChange={(e) => setFileType(e.target.value as FileTypeOption)}
+                  className="w-full bg-surface-2 border border-surface-3 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-brand"
+                >
+                  {FILE_TYPE_OPTIONS.map((ft) => (
+                    <option key={ft.value} value={ft.value}>
+                      {ft.label}
+                    </option>
+                  ))}
+                </select>
+
+
+
+              {fileType == 'link' && (
+
+                <div className="mt-2">
+                  {/* <p className="text-xs text-text-muted">Link selected.</p> */}
+                  <input
+                    type="url"
+                    value={linkUrl}
+                    onChange={(e) => setLinkUrl(e.target.value)}
+                    placeholder="https://example.com"
+                    className="w-full bg-surface-2 border border-surface-3 rounded-lg px-3 py-2 text-sm text-text placeholder-text-muted/50 focus:outline-none focus:border-brand"
+                  />
+
+                </div>
+              )}
             </div>
             {/* <div>
               <label className="block text-xs text-text-muted mb-1.5">Duration (days until expiry)</label>
@@ -512,12 +550,11 @@ export default function CreatePost() {
               onDragEnter={() => setIsThumbnailDragActive(true)}
               onDragOver={handleDragOver}
               onDragLeave={() => setIsThumbnailDragActive(false)}
-              onDrop={handleThumbnailDrop}
-              className={`w-full border border-dashed rounded-xl p-4 flex items-center gap-4 text-left text-text-muted transition ${
-                isThumbnailDragActive
-                  ? 'border-brand bg-brand/5 text-brand'
-                  : 'border-surface-3 hover:border-brand/50 hover:text-brand'
-              }`}
+              onDrop={handleThumbnailPost}
+              className={`w-full border border-dashed rounded-xl p-4 flex items-center gap-4 text-left text-text-muted transition ${isThumbnailDragActive
+                ? 'border-brand bg-brand/5 text-brand'
+                : 'border-surface-3 hover:border-brand/50 hover:text-brand'
+                }`}
             >
               <div className="flex h-16 w-16 items-center justify-center rounded-xl border border-surface-3 bg-surface-2">
                 <Image className="w-5 h-5" />
@@ -615,7 +652,7 @@ export default function CreatePost() {
               )}
             </div>
             <div>
-              <label className="block text-xs text-text-muted mb-1.5">Base Price (credits after drop)</label>
+              <label className="block text-xs text-text-muted mb-1.5">Base Price (credits after post)</label>
               <input
                 type="number"
                 min="100"
@@ -653,16 +690,15 @@ export default function CreatePost() {
             </div>
           )}
           <p className="text-xs text-text-muted">
-            By creating a drop you agree to the Prolifer8 Creator Terms.
+            By creating a post you agree to the Prolifer8 Creator Terms.
           </p>
           <button
             type="submit"
             disabled={!canSubmit}
-            className={`px-8 py-3 rounded-xl font-semibold text-sm transition flex items-center gap-2 ${
-              canSubmit
-                ? 'bg-brand text-white hover:bg-brand-dark shadow-lg shadow-brand/20'
-                : 'bg-surface-3 text-text-muted cursor-not-allowed'
-            }`}
+            className={`px-8 py-3 rounded-xl font-semibold text-sm transition flex items-center gap-2 ${canSubmit
+              ? 'bg-brand text-white hover:bg-brand-dark shadow-lg shadow-brand/20'
+              : 'bg-surface-3 text-text-muted cursor-not-allowed'
+              }`}
           >
             <Flame className="w-4 h-4" />
             {submitting ? (uploadStep || 'Creating…') : 'Create Post'}
@@ -673,8 +709,8 @@ export default function CreatePost() {
   );
 }
 
-/** Upload a file to GCS via a pre-signed PUT URL, reporting progress 0→100. */
-function uploadToGCS(
+/** Upload a file to object storage via a pre-signed PUT URL, reporting progress 0→100. */
+function uploadToStorage(
   signedUrl: string,
   file: File,
   mimeType: string,

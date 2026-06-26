@@ -524,7 +524,7 @@ module.exports = function createAdminRouter(deps = {}) {
         mediaType VARCHAR(40) NOT NULL,
         title VARCHAR(150) NOT NULL,
         description TEXT,
-        targetDropId VARCHAR(255) DEFAULT NULL,
+        targetPostId VARCHAR(255) DEFAULT NULL,
         mediaUrl TEXT,
         ctaText VARCHAR(255) DEFAULT NULL,
         budgetUsd DECIMAL(10,2) DEFAULT 0,
@@ -2181,7 +2181,7 @@ module.exports = function createAdminRouter(deps = {}) {
         <td>${escapeHtml(String(row.submissionType || '—'))}</td>
         <td>${escapeHtml(String(row.mediaType || '—'))}</td>
         <td>${previewCell(row)}</td>
-        <td>${escapeHtml(String(row.targetDropId || '—'))}</td>
+        <td>${escapeHtml(String(row.targetPostId || '—'))}</td>
         <td>$${Number(row.budgetUsd || 0).toFixed(2)}</td>
         <td>${statusChip(row.status)}</td>
         <td style="font-size:0.82em;color:var(--text2);">${fmtDate(row.created_at)}</td>

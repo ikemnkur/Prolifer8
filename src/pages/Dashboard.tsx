@@ -39,10 +39,10 @@ function PostMenu({ post, onMutate }: { post: Drop; onMutate: () => void }) {
       label: '✏️ Edit',
       onClick: () => navigate(`/post/${post.id}/edit`),
     },
-    {
-      label: '📋 Duplicate',
-      onClick: () => run(() => api.post(`/api/posts/${post.id}/duplicate`)),
-    },
+    // {
+    //   label: '📋 Duplicate',
+    //   onClick: () => run(() => api.post(`/api/posts/${post.id}/duplicate`)),
+    // },
     {
       label: post.status === 'hidden' ? '👁️ Unhide' : '🙈 Hide',
       onClick: () => run(() => api.patch(`/api/posts/${post.id}/visibility`)),

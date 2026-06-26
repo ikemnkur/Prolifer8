@@ -1,8 +1,9 @@
-import { Link } from 'react-router-dom';
-import { ChevronDown, ChevronUp, Search, ThumbsDown, ThumbsUp, Star, User } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { ChevronDown, ChevronUp, Search, ThumbsDown, ThumbsUp, Star, User, Eye } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { api } from '../lib/api';
+import { censorTitle, isMatureContent } from '../lib/contentSafety';
 import { getTopTags, loadTagProfile, scoreByTagAffinity, trackTags } from '../lib/tagProfile';
 import type { Drop } from '../types';
 
@@ -31,6 +32,7 @@ function getClipLabel(post: Drop, index: number): string {
 function TileCard({ post, clipLabel, onOpen }: { post: Drop; clipLabel: string; onOpen: (post: Drop) => void }) {
   const avatar = post.creatorAvatar?.trim();
   const tags = post.tags.length > 0 ? post.tags : ['discover', 'new', 'creator'];
+  const mature = isMatureContent(post.mature);
 
   return (
     <Link
@@ -42,7 +44,7 @@ function TileCard({ post, clipLabel, onOpen }: { post: Drop; clipLabel: string; 
       <img
         src={post.thumbnailUrl || `https://picsum.photos/seed/${post.id}/800/1000`}
         alt={post.title}
-        className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
+        className={`h-full w-full object-cover transition duration-300 group-hover:scale-[1.03] ${mature ? 'blur-md saturate-50 brightness-75' : ''}`}
       />
 
       <span className="absolute left-2 top-2 z-10 rounded-full border border-white/30 bg-black/45 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white backdrop-blur-sm">
@@ -65,6 +67,10 @@ function TileCard({ post, clipLabel, onOpen }: { post: Drop; clipLabel: string; 
           </div>
 
           <div className="flex items-center gap-2 text-[10px] text-white/90">
+           <span className="inline-flex items-center gap-0.5">
+              <Eye className="h-3 w-3" />
+              {post.views}
+            </span>
             <span className="inline-flex items-center gap-0.5">
               <ThumbsUp className="h-3 w-3" />
               {post.likeCount}
@@ -90,6 +96,17 @@ function TileCard({ post, clipLabel, onOpen }: { post: Drop; clipLabel: string; 
       </div>
 
       <div className="absolute inset-0 bg-gradient-to-t from-black/25 to-transparent opacity-80" />
+
+      <div className="absolute inset-x-0 bottom-12 z-10 px-2 pb-2">
+        <p className="max-w-full truncate rounded-md bg-black/45 px-2 py-1 text-[11px] font-semibold text-white backdrop-blur-sm">
+          {censorTitle(post.title, mature)}
+        </p>
+        {mature && (
+          <span className="mt-1 inline-flex rounded-full border border-white/25 bg-black/50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white backdrop-blur-sm">
+            Mature
+          </span>
+        )}
+      </div>
     </Link>
   );
 }
@@ -132,10 +149,21 @@ function ProfileCard({ creator }: { creator: CreatorPreview }) {
 }
 
 export default function Explore() {
+  const location = useLocation();
   const { drops } = useApp();
   const [search, setSearch] = useState('');
   const [isSearchPanelCollapsed, setIsSearchPanelCollapsed] = useState(false);
   const [searchTab, setSearchTab] = useState<SearchTab>('posts');
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const rawTag = String(params.get('tag') || '').trim();
+    if (!rawTag) return;
+
+    const normalizedTag = rawTag.replace(/^#/, '');
+    setSearch(`#${normalizedTag}`);
+    setSearchTab('posts');
+  }, [location.search]);
 
   const topTags = useMemo(() => getTopTags(6), []);
 
@@ -145,7 +173,7 @@ export default function Explore() {
 
     // Filter: hide 'removed', 'draft', and 'hidden' posts
     const pool = [...drops]
-      .filter((post) => post.isPublic && !['removed', 'draft', 'hidden'].includes(post.status))
+      .filter((post) => post.isPublic && !['removed', 'draft', 'hidden'].includes(post.status) && Number(post.flagCount || 0) < 3)
       .sort((a, b) => {
         // Boosted posts get a large score bonus so they always surface near the top
         const boostBonusA = a.status === 'boosted' ? 1000 : 0;

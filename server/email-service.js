@@ -12,8 +12,8 @@ const SES_SMTP_PORT = parseInt(process.env.SES_SMTP_PORT || "587", 10);
 const SES_SMTP_USER = process.env.SES_SMTP_USER || "";
 const SES_SMTP_PASSWORD = process.env.SES_SMTP_PASSWORD || "";
 
-const DEFAULT_FROM_EMAIL = process.env.EMAIL_FROM || "no-reply@faceblurr.com";
-const DEFAULT_FROM_NAME = process.env.EMAIL_FROM_NAME || "faceblurr";
+const DEFAULT_FROM_EMAIL = process.env.EMAIL_FROM || "no-reply@Prolifer8.com";
+const DEFAULT_FROM_NAME = process.env.EMAIL_FROM_NAME || "Prolifer8";
 
 function escapeRegExp(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -128,7 +128,7 @@ async function sendAccountVerificationEmail({
     username,
     verificationLink,
     verificationCode,
-    subject = "Verify your faceblurr account"
+    subject = "Verify your Prolifer8 account"
 }) {
     return sendTemplatedEmail({
         to,
@@ -146,7 +146,7 @@ async function sendPasswordResetEmail({
     to,
     username,
     resetCode,
-    subject = "Reset your faceblurr password"
+    subject = "Reset your Prolifer8 password"
 }) {
     return sendTemplatedEmail({
         to,
@@ -213,7 +213,7 @@ async function sendMonthlyNewsletterEmail({
     subject
 }) {
     const effectiveYear = year || new Date().getFullYear();
-    const effectiveSubject = subject || `faceblurr Monthly — ${month} ${effectiveYear}`;
+    const effectiveSubject = subject || `Prolifer8 Monthly — ${month} ${effectiveYear}`;
 
     return sendTemplatedEmail({
         to,

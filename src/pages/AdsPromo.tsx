@@ -9,7 +9,7 @@ type PromoItem = {
   mediaType: string;
   title: string;
   description: string | null;
-  targetDropId: string | null;
+  targetPostId: string | null;
   status: string;
   budgetUsd: number;
   impressions: number;

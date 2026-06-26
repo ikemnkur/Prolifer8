@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Save, Tag, X } from 'lucide-react';
+import { ArrowLeft, Save, Tag, X, Image } from 'lucide-react';
 import { api } from '../lib/api';
 import { mapDrop, type ServerPost } from '../hooks/useData';
 import type { Post } from '../types';
 
-const FILE_TYPES = ['game', 'app', 'document', 'music', 'video', 'other'] as const;
+const FILE_TYPES = ['game', 'app', 'document', 'music', 'video', 'audio', 'image', 'other', 'picture', 'link'] as const;
 
 export default function EditPost() {
   const { id } = useParams<{ id: string }>();
@@ -16,34 +16,60 @@ export default function EditPost() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
 
+   const fileInputRef = useRef<HTMLInputElement>(null);
+    const thumbnailInputRef = useRef<HTMLInputElement>(null);
+
   // Form fields
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [fileType, setFileType] = useState<(typeof FILE_TYPES)[number]>('other');
+    const [fileName, setFileName] = useState('');
+  const [fileSize, setFileSize] = useState('');
+  const [isMature, setIsMature] = useState(false);
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [goalAmount, setGoalAmount] = useState('');
   const [basePrice, setBasePrice] = useState('');
   const [trailerUrl, setTrailerUrl] = useState('');
+  const [linkUrl, setLinkUrl] = useState('');
+
+  const [thumbnailName, setThumbnailName] = useState('');
+  const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
+  const [thumbnailPreviewUrl, setThumbnailPreviewUrl] = useState('');
+
+  const [postFile, setPostFile] = useState<File | null>(null);
+  const [postFileMime, setPostFileMime] = useState('');
+  const [filePreviewUrl, setFilePreviewUrl] = useState('');
+  const [filePreviewText, setFilePreviewText] = useState('');
+  const [isFileDragActive, setIsFileDragActive] = useState(false);
+  const [isThumbnailDragActive, setIsThumbnailDragActive] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStep, setUploadStep] = useState('');
+  const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+  const [createdPostId, setCreatedPostId] = useState('');
 
   useEffect(() => {
     if (!id) return;
     api.get<ServerPost>(`/api/posts/${id}`)
       .then((raw) => {
         const d = mapDrop(raw);
-        if (d.status !== 'pending') {
-          setError('Only pending posts can be edited.');
-          setLoading(false);
-          return;
-        }
+        // if (d.status !== 'pending') {
+        //   setError('Only pending posts can be edited.');
+        //   setLoading(false);
+        //   return;
+        // }
         setPost(d);
         setTitle(d.title);
         setDescription(d.description);
         setFileType(d.fileType);
+        setIsMature(Boolean(d.mature));
         setTags(d.tags);
         setGoalAmount(String(d.goalAmount));
         setBasePrice(String(d.basePrice));
         setTrailerUrl(d.trailerUrl);
+        setLinkUrl((d.link || (d.filePath && /^https?:\/\//i.test(d.filePath) ? d.filePath : '') || '').trim());
       })
       .catch(() => setError('Post not found'))
       .finally(() => setLoading(false));
@@ -55,30 +81,135 @@ export default function EditPost() {
     setTagInput('');
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!id || saving) return;
-    setSaving(true);
-    setError('');
-    try {
-      await api.put(`/api/posts/${id}`, {
-        userId: post?.creatorId,
-        title: title.trim(),
-        description: description.trim(),
-        fileType,
-        tags,
-        goalAmount: Number(goalAmount),
-        basePrice: Number(basePrice),
-        trailerUrl: trailerUrl.trim() || null,
-      });
-      setSuccess(true);
-      setTimeout(() => navigate(`/post/${id}`), 1200);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to save changes');
-    } finally {
-      setSaving(false);
+ const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  if (!id || saving) return;
+  setSaving(true);
+  setError('');
+
+  try {
+    let thumbnailKey: string | undefined;
+
+    // 1. Upload new thumbnail to R2 if the user selected one
+    if (thumbnailFile) {
+      setUploadStep('Requesting upload URL…');
+      const { signedUrl, key } = await api.post<{ signedUrl: string; key: string }>(
+        `/api/posts/${id}/thumbnail-upload-url`,
+        {
+          fileName: thumbnailFile.name,
+          mimeType: thumbnailFile.type || 'image/jpeg',
+        }
+      );
+
+      setUploadStep('Uploading thumbnail…');
+      await uploadToStorage(
+        signedUrl,
+        thumbnailFile,
+        thumbnailFile.type || 'image/jpeg',
+        setUploadProgress
+      );
+
+      thumbnailKey = key;
     }
+
+    // 2. Save post fields (+ new thumbnail key, which triggers old-file deletion server-side)
+    setUploadStep('Saving changes…');
+    await api.put(`/api/posts/${id}`, {
+      title: title.trim(),
+      description: description.trim(),
+      fileType,
+      mature: isMature,
+      tags,
+      trailerUrl: trailerUrl.trim() || null,
+      link: fileType === 'link' ? linkUrl.trim() || null : null,
+      ...(thumbnailKey ? { thumbnailKey } : {}),
+    });
+
+    setSuccess(true);
+    setUploadStep('');
+    setTimeout(() => navigate(`/post/${id}`), 1200);
+  } catch (err: unknown) {
+    setError(err instanceof Error ? err.message : 'Failed to save changes');
+  } finally {
+    setSaving(false);
+  }
+};
+
+   const assignPostFile = (f: File) => {
+    setFileName(f.name);
+    setPostFile(f);
+    setPostFileMime(f.type || 'application/octet-stream');
+    const mb = f.size / (1024 * 1024);
+    setFileSize(mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb.toFixed(1)} MB`);
   };
+
+  const assignThumbnailFile = (f: File) => {
+    setThumbnailName(f.name);
+    setThumbnailFile(f);
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setThumbnailPreviewUrl(reader.result as string);
+    };
+    reader.readAsDataURL(f);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setSubmitError('');
+    assignPostFile(f);
+  };
+
+  const handleThumbnailSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    assignThumbnailFile(f);
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleFileDrop = (e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    setIsFileDragActive(false);
+    const f = e.dataTransfer.files?.[0];
+    if (!f) return;
+    setSubmitError('');
+    assignPostFile(f);
+  };
+
+  const handleThumbnailDrop = (e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    setIsThumbnailDragActive(false);
+    const f = e.dataTransfer.files?.[0];
+    if (!f) return;
+    assignThumbnailFile(f);
+  };
+
+  // helper — reuse from CreatePost
+function uploadToStorage(
+  signedUrl: string,
+  file: File,
+  mimeType: string,
+  onProgress: (pct: number) => void
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', signedUrl);
+    xhr.setRequestHeader('Content-Type', mimeType);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new Error(`Upload failed: HTTP ${xhr.status}`));
+    xhr.onerror = () => reject(new Error('Network error during file upload'));
+    xhr.send(file);
+  });
+}
 
   if (loading) {
     return (
@@ -140,17 +271,28 @@ export default function EditPost() {
                 key={ft}
                 type="button"
                 onClick={() => setFileType(ft)}
-                className={`px-3 py-1.5 rounded-lg text-sm capitalize transition ${
-                  fileType === ft
+                className={`px-3 py-1.5 rounded-lg text-sm capitalize transition ${fileType === ft
                     ? 'bg-brand text-white'
                     : 'bg-surface-2 text-text-muted hover:text-text border border-surface-3'
-                }`}
+                  }`}
               >
                 {ft}
               </button>
             ))}
           </div>
         </div>
+
+        <label className="flex items-start gap-3 rounded-xl border border-surface-3 bg-surface-2 px-4 py-3">
+          <input
+            type="checkbox"
+            checked={isMature}
+            onChange={(e) => setIsMature(e.target.checked)}
+            className="mt-1 h-4 w-4 rounded border-surface-3 text-brand focus:ring-brand"
+          />
+          <span className="text-sm text-text-muted">
+            Mark this post as mature so it is blurred in Explore and More Posts.
+          </span>
+        </label>
 
         {/* Tags */}
         <div>
@@ -206,6 +348,59 @@ export default function EditPost() {
           </div>
         </div> */}
 
+        {/* ── Thumbnail + Trailer ── */}
+        <div>
+          {/* <section className="bg-surface rounded-2xl border border-surface-3 p-5 space-y-4"> */}
+          <h2 className="text-sm font-semibold text-text-muted uppercase tracking-wider flex items-center gap-2">
+            <Image className="w-4 h-4" /> Thumbnail + Trailer
+          </h2>
+          <br></br>
+
+          <div>
+            <label className="block text-xs text-text-muted mb-1.5">Thumbnail Image</label>
+            <input
+              ref={thumbnailInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleThumbnailSelect}
+            />
+            <button
+              type="button"
+              onClick={() => thumbnailInputRef.current?.click()}
+              onDragEnter={() => setIsThumbnailDragActive(true)}
+              onDragOver={handleDragOver}
+              onDragLeave={() => setIsThumbnailDragActive(false)}
+              onDrop={handleThumbnailDrop}
+              className={`w-full border border-dashed rounded-xl p-4 flex items-center gap-4 text-left text-text-muted transition ${isThumbnailDragActive
+                  ? 'border-brand bg-brand/5 text-brand'
+                  : 'border-surface-3 hover:border-brand/50 hover:text-brand'
+                }`}
+            >
+              <div className="flex h-16 w-16 items-center justify-center rounded-xl border border-surface-3 bg-surface-2">
+                <Image className="w-5 h-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-text">{thumbnailName || 'Upload thumbnail image'}</p>
+                <p className="text-xs text-text-muted">Click or drag an image here. Recommended for reels and links.</p>
+              </div>
+            </button>
+
+            {thumbnailFile && (
+              <div className="mt-3 overflow-hidden rounded-2xl border border-surface-3 bg-black/20">
+                <img
+                  src={thumbnailPreviewUrl}
+                  alt={thumbnailName}
+                  className="h-56 w-full object-cover"
+                />
+              </div>
+            )}
+          </div>
+          {/* </section> */}
+
+        </div>
+
+
         {/* Trailer URL */}
         <div>
           <label className="text-sm text-text-muted block mb-1">Trailer URL (optional)</label>
@@ -218,12 +413,26 @@ export default function EditPost() {
           />
         </div>
 
+        {fileType === 'link' && (
+          <div>
+            <label className="text-sm text-text-muted block mb-1">External Link URL</label>
+            <input
+              type="url"
+              value={linkUrl}
+              onChange={(e) => setLinkUrl(e.target.value)}
+              placeholder="https://example.com"
+              className="w-full bg-surface-2 border border-surface-3 rounded-xl px-4 py-2.5 text-sm text-text focus:outline-none focus:border-brand"
+              required
+            />
+          </div>
+        )}
+
         {error && <p className="text-danger text-sm">{error}</p>}
         {success && <p className="text-green-500 text-sm">Changes saved! Redirecting…</p>}
 
         <button
           type="submit"
-          disabled={saving || !title.trim() || !description.trim()}
+          disabled={saving || !title.trim() || !description.trim() || (fileType === 'link' && !linkUrl.trim())}
           className="w-full py-3 rounded-xl bg-brand text-white font-bold text-sm hover:bg-brand-dark transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
         >
           <Save className="w-4 h-4" />

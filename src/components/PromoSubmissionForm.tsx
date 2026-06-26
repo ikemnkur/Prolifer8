@@ -19,7 +19,7 @@ export default function PromoSubmissionForm({ fixedType, title, subtitle }: Prop
   const [mediaUrl, setMediaUrl] = useState('');
   const [targetUrl, setTargetUrl] = useState('');
   const [ctaText, setCtaText] = useState('');
-  const [budgetUsd, setBudgetUsd] = useState('');
+  const [budgetCredits, setBudgetCredits] = useState('');
   const [contactEmail, setContactEmail] = useState('');
   const [tags, setTags] = useState('');
   const [assetFile, setAssetFile] = useState<File | null>(null);
@@ -46,7 +46,7 @@ export default function PromoSubmissionForm({ fixedType, title, subtitle }: Prop
     setMediaUrl('');
     setTargetUrl('');
     setCtaText('');
-    setBudgetUsd('');
+    setBudgetCredits('');
     setTags('');
     setAssetFile(null);
     setAssetName('');
@@ -71,7 +71,7 @@ export default function PromoSubmissionForm({ fixedType, title, subtitle }: Prop
       form.append('targetUrl', targetUrl.trim());
       form.append('mediaUrl', mediaUrl.trim());
       form.append('ctaText', ctaText.trim());
-      form.append('budgetUsd', budgetUsd.trim());
+      form.append('budgetCredits', budgetCredits.trim());
       form.append('contactEmail', contactEmail.trim());
       form.append('tags', tags.trim());
       if (assetFile) form.append('asset', assetFile);
@@ -197,13 +197,13 @@ export default function PromoSubmissionForm({ fixedType, title, subtitle }: Prop
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm text-text-muted mb-1">Budget (USD)</label>
+            <label className="block text-sm text-text-muted mb-1">Budget (Credits)</label>
             <input
               type="number"
               min="0"
               step="0.01"
-              value={budgetUsd}
-              onChange={(e) => setBudgetUsd(e.target.value)}
+              value={budgetCredits}
+              onChange={(e) => setBudgetCredits(e.target.value)}
               className="w-full rounded-xl border border-surface-3 bg-bg px-3 py-2.5 text-text"
             />
           </div>

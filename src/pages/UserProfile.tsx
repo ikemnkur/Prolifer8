@@ -222,6 +222,7 @@ export default function UserProfile() {
             </div>
 
             <div className="flex-1 pt-2 sm:pt-6">
+              <div className="rounded-xl bg-black/30 p-3 backdrop-blur-[1px]">
               <div className="flex items-center justify-between gap-3">
                 <h1 className="text-2xl font-bold text-text truncate">{profile.username}</h1>
 
@@ -310,6 +311,7 @@ export default function UserProfile() {
                   })}
                 </div>
               )}
+              </div>
             </div>
           </div>
         </div>

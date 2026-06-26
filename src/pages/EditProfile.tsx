@@ -178,15 +178,28 @@ export default function EditProfile() {
   };
 
   const uploadImage = async (kind: 'avatar' | 'banner', file: File) => {
-    const formData = new FormData();
-    formData.append('image', file);
-    const endpoint = kind === 'avatar'
-      ? '/api/users/profile/avatar-upload'
-      : '/api/users/profile/banner-upload';
+    const sign = await api.post<{ uploadUrl?: string; fileUrl?: string }>('/api/users/profile-upload-url', {
+      kind,
+      contentType: file.type,
+    });
 
-    const result = await api.upload<{ url?: string }>(endpoint, formData);
-    if (!result?.url) throw new Error('Upload succeeded but no URL was returned');
-    return result.url;
+    if (!sign?.uploadUrl || !sign?.fileUrl) {
+      throw new Error('Failed to initialize cloud upload');
+    }
+
+    const putRes = await fetch(sign.uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': file.type,
+      },
+      body: file,
+    });
+
+    if (!putRes.ok) {
+      throw new Error('Cloud upload failed');
+    }
+
+    return sign.fileUrl;
   };
 
   const processAndUpload = async (kind: 'avatar' | 'banner', file: File) => {

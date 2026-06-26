@@ -39,6 +39,7 @@ import PostPublicView from './pages/PostPublicView';
 import PostPublicInfo from './pages/PostPublicInfo';
 import PostAuthRoute from './components/PostAuthRoute';
 // import PostAuthRoute from './components/PostAuthRoute';
+import AccountSettings from './pages/AccountSettings';
 
 export default function App() {
   return (
@@ -93,6 +94,7 @@ export default function App() {
               <Route path="/plans" element={<ProtectedRoute><Plans /></ProtectedRoute>} />
               <Route path="/subscription/stripe" element={<ProtectedRoute><SubscriptionCallback /></ProtectedRoute>} />
               <Route path="/edit-profile" element={<ProtectedRoute><EditProfile /></ProtectedRoute>} />
+              <Route path="/account/settings" element={<ProtectedRoute><AccountSettings /></ProtectedRoute>} />
             </Route>
           </Routes>
         </BrowserRouter>

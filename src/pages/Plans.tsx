@@ -36,13 +36,14 @@ const PLANS: Plan[] = [
       'Ads displayed',
       'Standard quality only',
       'File size limits apply',
-      'Drop creation limits',
+      'Post creation limits',
+      'Post Library limits(Max Size = 10 items)',
       'Longest upload wait time',
     ],
   },
   {
     id: 'standard',
-    name: 'Standard',
+    name: 'Plus',
     price: '$5',
     interval: '/mo',
     credits: '7,500 credits/mo',
@@ -54,18 +55,20 @@ const PLANS: Plan[] = [
     features: [
       '2,500 bonus credits per month',
       'Ad free',
-      'No daily limits',
-      // 'No watermarks',
+      'No daily post limits',
+      'Auto Verification Status',
+      'Get Posts recommended on more often',
       'HD content quality',
       'Larger file size limits (250 MB)',
-      'Ad Analytics',
+      'Larger Post Library (Max Size = 30 items)',
+      // 'Ad Analytics',
     ],
     stripePriceId: import.meta.env.VITE_STRIPE_PRICE_STANDARD,
-    stripePaymentLink: 'https://buy.stripe.com/test_3cIeV63u3eVYfrL4UV0sU0e',
+    stripePaymentLink: 'https://buy.stripe.com/test_dRm3cod4D3dg6Vf0EF0sU0k',
   },
   {
     id: 'premium',
-    name: 'Premium',
+    name: 'Pro',
     price: '$10',
     interval: '/mo',
     credits: '15,000 credits/mo',
@@ -77,14 +80,15 @@ const PLANS: Plan[] = [
       '5,000 bonus credits per month',
       'Everything in Standard',
       'No wait times',
-      // 'Ad Analytics',
-      'Drop Analytics',
+      'Get Posts Featured on Explore Page',
+      'Post Analytics',
       'Full HD & 4K quality',
       'Largest file limits (500 MB)',
+      'Larger Post Library (Max Size = 100 items)',
       'Priority support',
     ],
     stripePriceId: import.meta.env.VITE_STRIPE_PRICE_PREMIUM,
-    stripePaymentLink: 'https://buy.stripe.com/test_9B69AM1lV7twcfz8770sU0d',
+    stripePaymentLink: 'https://buy.stripe.com/test_14A9AM9Sr7twbbvgDD0sU0j',
   },
 ];
 
@@ -225,7 +229,7 @@ export default function Plans() {
       </div>
 
       <p className="text-center text-xs text-text-muted mt-8">
-        Subscriptions are billed monthly and can be cancelled anytime from the billing portal.
+        Subscriptions are billed monthly and can be cancelled anytime from the Stripe billing portal.
         Credits reset each billing cycle and do not roll over.
       </p>
     </div>
