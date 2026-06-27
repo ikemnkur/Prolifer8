@@ -16,20 +16,15 @@ export default function EditPost() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
 
-   const fileInputRef = useRef<HTMLInputElement>(null);
-    const thumbnailInputRef = useRef<HTMLInputElement>(null);
+  const thumbnailInputRef = useRef<HTMLInputElement>(null);
 
   // Form fields
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [fileType, setFileType] = useState<(typeof FILE_TYPES)[number]>('other');
-    const [fileName, setFileName] = useState('');
-  const [fileSize, setFileSize] = useState('');
   const [isMature, setIsMature] = useState(false);
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
-  const [goalAmount, setGoalAmount] = useState('');
-  const [basePrice, setBasePrice] = useState('');
   const [trailerUrl, setTrailerUrl] = useState('');
   const [linkUrl, setLinkUrl] = useState('');
 
@@ -37,18 +32,7 @@ export default function EditPost() {
   const [thumbnailFile, setThumbnailFile] = useState<File | null>(null);
   const [thumbnailPreviewUrl, setThumbnailPreviewUrl] = useState('');
 
-  const [postFile, setPostFile] = useState<File | null>(null);
-  const [postFileMime, setPostFileMime] = useState('');
-  const [filePreviewUrl, setFilePreviewUrl] = useState('');
-  const [filePreviewText, setFilePreviewText] = useState('');
-  const [isFileDragActive, setIsFileDragActive] = useState(false);
   const [isThumbnailDragActive, setIsThumbnailDragActive] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadStep, setUploadStep] = useState('');
-  const [submitted, setSubmitted] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState('');
-  const [createdPostId, setCreatedPostId] = useState('');
 
   useEffect(() => {
     if (!id) return;
@@ -66,8 +50,6 @@ export default function EditPost() {
         setFileType(d.fileType);
         setIsMature(Boolean(d.mature));
         setTags(d.tags);
-        setGoalAmount(String(d.goalAmount));
-        setBasePrice(String(d.basePrice));
         setTrailerUrl(d.trailerUrl);
         setLinkUrl((d.link || (d.filePath && /^https?:\/\//i.test(d.filePath) ? d.filePath : '') || '').trim());
       })
@@ -92,7 +74,6 @@ export default function EditPost() {
 
     // 1. Upload new thumbnail to R2 if the user selected one
     if (thumbnailFile) {
-      setUploadStep('Requesting upload URL…');
       const { signedUrl, key } = await api.post<{ signedUrl: string; key: string }>(
         `/api/posts/${id}/thumbnail-upload-url`,
         {
@@ -101,19 +82,17 @@ export default function EditPost() {
         }
       );
 
-      setUploadStep('Uploading thumbnail…');
       await uploadToStorage(
         signedUrl,
         thumbnailFile,
         thumbnailFile.type || 'image/jpeg',
-        setUploadProgress
+        () => {}
       );
 
       thumbnailKey = key;
     }
 
     // 2. Save post fields (+ new thumbnail key, which triggers old-file deletion server-side)
-    setUploadStep('Saving changes…');
     await api.put(`/api/posts/${id}`, {
       title: title.trim(),
       description: description.trim(),
@@ -126,7 +105,6 @@ export default function EditPost() {
     });
 
     setSuccess(true);
-    setUploadStep('');
     setTimeout(() => navigate(`/post/${id}`), 1200);
   } catch (err: unknown) {
     setError(err instanceof Error ? err.message : 'Failed to save changes');
@@ -134,14 +112,6 @@ export default function EditPost() {
     setSaving(false);
   }
 };
-
-   const assignPostFile = (f: File) => {
-    setFileName(f.name);
-    setPostFile(f);
-    setPostFileMime(f.type || 'application/octet-stream');
-    const mb = f.size / (1024 * 1024);
-    setFileSize(mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb.toFixed(1)} MB`);
-  };
 
   const assignThumbnailFile = (f: File) => {
     setThumbnailName(f.name);
@@ -153,13 +123,6 @@ export default function EditPost() {
     reader.readAsDataURL(f);
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setSubmitError('');
-    assignPostFile(f);
-  };
-
   const handleThumbnailSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -169,15 +132,6 @@ export default function EditPost() {
   const handleDragOver = (e: React.DragEvent<HTMLElement>) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
-  };
-
-  const handleFileDrop = (e: React.DragEvent<HTMLElement>) => {
-    e.preventDefault();
-    setIsFileDragActive(false);
-    const f = e.dataTransfer.files?.[0];
-    if (!f) return;
-    setSubmitError('');
-    assignPostFile(f);
   };
 
   const handleThumbnailDrop = (e: React.DragEvent<HTMLElement>) => {
