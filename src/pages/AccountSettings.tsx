@@ -144,7 +144,7 @@ export default function AccountSettings() {
 
 function AppearanceSection({ onToast }: { onToast: (t: Toast) => void }) {
   const [theme, setTheme] = useState<ThemeMode>(() =>
-    document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'
+    document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'
   );
 
   const setThemeMode = (nextTheme: ThemeMode) => {

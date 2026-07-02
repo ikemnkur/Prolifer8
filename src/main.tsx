@@ -9,7 +9,7 @@ const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
 if (storedTheme === 'dark' || storedTheme === 'light') {
   document.documentElement.dataset.theme = storedTheme;
 } else {
-  document.documentElement.dataset.theme = 'light';
+  document.documentElement.dataset.theme = 'dark';
 }
 
 createRoot(document.getElementById('root')!).render(
