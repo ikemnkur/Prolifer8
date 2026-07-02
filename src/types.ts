@@ -127,12 +127,13 @@ export interface User {
   verification: string; // 'none' | 'false' | 'true'
   // added fields
   accountStatus: string; // 'active' | 'suspended' | 'banned'
-  accountType: string; // 'free' | 'standard' | 'premium' | 'admin'
+  accountPlan: string; // 'free' | 'standard' | 'premium' | 'admin'
 }
 
 export interface CreatorProfile {
   id: string;
   username: string;
+  accountType?: 'business' | 'creator' | 'personal' | 'private' | string;
   avatar: string;
   bio: string;
   rating: number;            // 0-100

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useBeforeUnload, useNavigate } from 'react-router-dom';
 import { SocialIcon } from 'react-social-icons';
 import {
   ArrowLeft, Eye, Save, User, Link as LinkIcon,
@@ -57,6 +57,7 @@ export default function EditProfile() {
   const [avatarDragOver, setAvatarDragOver] = useState(false);
   const [bannerDragOver, setBannerDragOver] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [initialForm, setInitialForm] = useState<ProfileForm | null>(null);
 
   const [form, setForm] = useState<ProfileForm>({
     bio: '',
@@ -75,19 +76,75 @@ export default function EditProfile() {
           ...EMPTY_SOCIAL,
           ...(typeof raw === 'string' ? (JSON.parse(raw || '{}') as SocialLinks) : (raw ?? {})),
         };
-        setForm({
+        const nextForm: ProfileForm = {
           bio: p.bio || '',
           bioVideoUrl: p.bioVideoUrl || '',
           bannerUrl: p.bannerUrl || '',
           avatarUrl: p.profilePicture || user.avatar || '',
           socialLinks: social,
-        });
+        };
+        setForm(nextForm);
+        setInitialForm(nextForm);
       })
       .catch(() => {
-        setForm(f => ({ ...f, avatarUrl: user.avatar || '' }));
+        setForm(f => {
+          const nextForm = { ...f, avatarUrl: user.avatar || '' };
+          setInitialForm(nextForm);
+          return nextForm;
+        });
       })
       .finally(() => setLoading(false));
   }, [user]);
+
+  const hasUnsavedChanges = !!initialForm && JSON.stringify(form) !== JSON.stringify(initialForm);
+  const shouldBlockNavigation = !loading && !saving && hasUnsavedChanges;
+
+  useBeforeUnload((event) => {
+    if (!shouldBlockNavigation) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+
+  useEffect(() => {
+    if (!shouldBlockNavigation) return;
+
+    const confirmLeave = () => window.confirm('You have unsaved changes. Leave this page without saving?');
+
+    const onDocumentClickCapture = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const anchor = target?.closest('a[href]') as HTMLAnchorElement | null;
+      if (!anchor) return;
+
+      if (anchor.target && anchor.target !== '_self') return;
+      if (anchor.hasAttribute('download')) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+      const href = anchor.getAttribute('href') || '';
+      if (!href || href.startsWith('#')) return;
+
+      const isSameOrigin = href.startsWith('/') || href.startsWith(window.location.origin);
+      if (!isSameOrigin) return;
+
+      if (!confirmLeave()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
+    const onPopState = () => {
+      if (confirmLeave()) return;
+      window.setTimeout(() => {
+        window.history.go(1);
+      }, 0);
+    };
+
+    document.addEventListener('click', onDocumentClickCapture, true);
+    window.addEventListener('popstate', onPopState);
+    return () => {
+      document.removeEventListener('click', onDocumentClickCapture, true);
+      window.removeEventListener('popstate', onPopState);
+    };
+  }, [shouldBlockNavigation]);
 
   if (!user) {
     navigate('/login');
@@ -288,6 +345,7 @@ export default function EditProfile() {
         profilePicture: form.avatarUrl || null,
         socialLinks: form.socialLinks,
       });
+      setInitialForm(form);
       navigate(`/user/${user.id}`);
     } catch (e: unknown) {
       setSaveError(e instanceof Error ? e.message : 'Failed to save profile');

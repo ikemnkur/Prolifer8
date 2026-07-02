@@ -473,7 +473,7 @@ server.post(PROXY + '/api/auth/login', async (req, res) => {
         token,
         tokenExpiry: new Date(Date.now() + 7200 * 1000),
         user: { id: user.id, username: user.username, email: user.email, credits: user.credits },
-        accountType: user.accountType,
+        accountPlan: user.accountPlan,
         message: 'Login successful',
         // verification: { status: user.verification, amount1: user.amount1, amount2: user.amount2 },
         verification: {
@@ -583,7 +583,7 @@ server.post(PROXY + '/api/user', authenticateToken, async (req, res) => {
       planExpiry: user.planExpiry,
       token: token,
       tokenExpiry: new Date(Date.now() + 7200 * 1000),
-      accountType: user.accountType,
+      accountPlan: user.accountPlan,
       message: 'Login successful'
     });
     // }
@@ -648,7 +648,7 @@ server.put(PROXY + '/api/users/profile', authenticateToken, async (req, res) => 
 // Custom registration route
 server.post(PROXY + '/api/auth/register', async (req, res) => {
   try {
-    const { username, email, password, firstName, lastName, accountType, birthDate } = req.body;
+    const { username, email, password, firstName, lastName, accountPlan, birthDate } = req.body;
 
     // Validate required fields
     if (!username || !email || !password || !firstName) {
@@ -727,7 +727,7 @@ server.post(PROXY + '/api/auth/register', async (req, res) => {
       id: userId,
       loginStatus: true,
       lastLogin: currentDateTime,
-      accountType: accountType || 'free',
+      accountPlan: accountPlan || 'free',
       username: username,
       email: email,
       firstName: firstName,
@@ -753,12 +753,12 @@ server.post(PROXY + '/api/auth/register', async (req, res) => {
     };
 
     // await pool.execute(
-    //   'INSERT INTO userData (id, loginStatus, lastLogin, accountType, username, email, firstName, lastName, phoneNumber, birthDate, encryptionKey, credits, reportCount, isBanned, banReason, banDate, banDuration, createdAt, updatedAt, passwordHash, twoFactorEnabled, twoFactorSecret, recoveryCodes, profilePicture, bio, socialLinks, verification, amount1, amount2, cryptoAmounts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    //   'INSERT INTO userData (id, loginStatus, lastLogin, accountPlan, username, email, firstName, lastName, phoneNumber, birthDate, encryptionKey, credits, reportCount, isBanned, banReason, banDate, banDuration, createdAt, updatedAt, passwordHash, twoFactorEnabled, twoFactorSecret, recoveryCodes, profilePicture, bio, socialLinks, verification, amount1, amount2, cryptoAmounts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     //   [
     //     newUser.id,
     //     newUser.loginStatus,
     //     newUser.lastLogin,
-    //     newUser.accountType,
+    //     newUser.accountPlan,
     //     newUser.username,
     //     newUser.email,
     //     newUser.firstName,
@@ -797,7 +797,7 @@ server.post(PROXY + '/api/auth/register', async (req, res) => {
       id: newUser.id,
       loginStatus: newUser.loginStatus,
       lastLogin: newUser.lastLogin,
-      accountType: newUser.accountType,
+      accountPlan: newUser.accountPlan,
       username: newUser.username,
       email: newUser.email,
       firstName: newUser.firstName,
@@ -1785,7 +1785,7 @@ async function CreateNotification(type, title, message, category, username, prio
 //  const newUser = {
 //   loginStatus: true,
 //   lastLogin: new Date().toISOString(),
-//   accountType: accountType || 'buyer',
+//   accountPlan: accountPlan || 'buyer',
 //   username: username,
 //   email: email,
 //   firstName: name.split(' ')[0] || name,
@@ -1850,7 +1850,7 @@ server.post(PROXY + '/api/userData', async (req, res) => {
       id: userId,
       loginStatus: newUser.loginStatus,
       lastLogin: formatDateTimeForMySQL(newUser.lastLogin),
-      accountType: newUser.accountType,
+      accountPlan: newUser.accountPlan,
       username: newUser.username,
       email: newUser.email,
       firstName: newUser.firstName,
@@ -2952,7 +2952,7 @@ server.post(PROXY + '/api/upload/transaction-screenshot/:username/:txHash', auth
 //     `email` varchar(100) DEFAULT NULL,
 //     `credits` int DEFAULT NULL,
 //     `passwordHash` varchar(255) DEFAULT NULL,
-//     `accountType` enum('buyer', 'seller') DEFAULT NULL,
+//     `accountPlan` enum('buyer', 'seller') DEFAULT NULL,
 //     `lastLogin` datetime DEFAULT NULL,
 //     `loginStatus` tinyint(1) DEFAULT NULL,
 //     `firstName` varchar(50) DEFAULT NULL,
@@ -5873,7 +5873,7 @@ async function stripeBuySubscription(data) {
           .where('username', username)
           .update({
             credits: knex.raw('credits + ?', [Math.floor(credits) / 2]),
-            accountType: planType
+            accountPlan: planType
           });
       }
 

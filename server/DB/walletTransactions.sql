@@ -22,7 +22,7 @@ CREATE TABLE `walletTransactions` (
   `amount` int NOT NULL COMMENT 'Positive = credit, negative = debit',
   `balanceAfter` int NOT NULL COMMENT 'User credit balance after this transaction',
 
-  `relatedDropId` varchar(36) DEFAULT NULL,
+  `relatedpostId` varchar(36) DEFAULT NULL,
   `relatedPurchaseId` varchar(10) DEFAULT NULL,
   `relatedContributionId` varchar(36) DEFAULT NULL,
   `description` varchar(255) DEFAULT NULL,
@@ -32,7 +32,7 @@ CREATE TABLE `walletTransactions` (
   PRIMARY KEY (`id`),
   KEY `idx_userId` (`userId`),
   KEY `idx_type` (`type`),
-  KEY `idx_relatedDropId` (`relatedDropId`),
+  KEY `idx_relatedpostId` (`relatedpostId`),
   KEY `idx_created_at` (`created_at`),
   CONSTRAINT `fk_wallet_user` FOREIGN KEY (`userId`) REFERENCES `userData` (`id`) ON DELETE CASCADE
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci;

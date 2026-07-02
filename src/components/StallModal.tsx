@@ -3,8 +3,8 @@ import { Timer, Zap, X, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { api } from '../lib/api';
 
 interface Props {
-  dropId: string;
-  dropTitle: string;
+  postId: string;
+  postTitle: string;
   totalMinutesLeft: number; // current time left in minutes
   onClose: () => void;
   onStalled: (newExpiresAt: string, creditsSpent: number, newBalance: number, newScheduledDropTime: string) => void;
@@ -21,7 +21,7 @@ interface PriceResponse {
 
 type Phase = 'pick' | 'confirm' | 'success' | 'error';
 
-export default function StallModal({ dropId, dropTitle, totalMinutesLeft, onClose, onStalled }: Props) {
+export default function StallModal({ postId, postTitle, totalMinutesLeft, onClose, onStalled }: Props) {
   const [sliderVal, setSliderVal] = useState(5);
   const [priceMap, setPriceMap] = useState<Partial<Record<number, number>>>({});
   const [loadingPrices, setLoadingPrices] = useState(true);
@@ -40,7 +40,7 @@ export default function StallModal({ dropId, dropTitle, totalMinutesLeft, onClos
     try {
       const results = await Promise.all(
         STALL_OPTIONS.map((m) =>
-          api.get<PriceResponse>(`/api/posts/${dropId}/stall-price?minutes=${m}`)
+          api.get<PriceResponse>(`/api/posts/${postId}/stall-price?minutes=${m}`)
             .then((r) => [m, r.price] as [number, number])
             .catch(() => [m, null] as [number, null])
         )
@@ -51,17 +51,17 @@ export default function StallModal({ dropId, dropTitle, totalMinutesLeft, onClos
     } finally {
       setLoadingPrices(false);
     }
-  }, [dropId]);
+  }, [postId]);
 
   // Fetch price for arbitrary slider values not in STALL_OPTIONS
   useEffect(() => {
     if (STALL_OPTIONS.includes(minutes as StallOption)) return;
     const controller = new AbortController();
-    api.get<PriceResponse>(`/api/posts/${dropId}/stall-price?minutes=${minutes}`)
+    api.get<PriceResponse>(`/api/posts/${postId}/stall-price?minutes=${minutes}`)
       .then((r) => setPriceMap((prev) => ({ ...prev, [minutes]: r.price })))
       .catch(() => {});
     return () => controller.abort();
-  }, [dropId, minutes]);
+  }, [postId, minutes]);
 
   useEffect(() => { fetchPrices(); }, [fetchPrices]);
 
@@ -70,7 +70,7 @@ export default function StallModal({ dropId, dropTitle, totalMinutesLeft, onClos
     setErrMsg('');
     try {
       const res = await api.post<{ success: boolean; stallMinutes: number; creditCost: number; newBalance: number; expiresAt: string; scheduledDropTime: string }>(
-        `/api/posts/${dropId}/stall`,
+        `/api/posts/${postId}/stall`,
         { minutes }
       );
       setPhase('success');
@@ -111,7 +111,7 @@ export default function StallModal({ dropId, dropTitle, totalMinutesLeft, onClos
               <p className="text-lg font-semibold text-text">Clock stalled!</p>
               <p className="text-sm text-text-muted">
                 Added <span className="text-brand font-bold">{minutes} minutes</span> to&nbsp;
-                <span className="font-semibold">"{dropTitle}"</span>.
+                <span className="font-semibold">"{postTitle}"</span>.
               </p>
               <button
                 onClick={onClose}
@@ -148,7 +148,7 @@ export default function StallModal({ dropId, dropTitle, totalMinutesLeft, onClos
           {phase === 'pick' && (
             <>
               <p className="text-sm text-text-muted">
-                Add time to <span className="font-semibold text-text">"{dropTitle}"</span>.
+                Add time to <span className="font-semibold text-text">"{postTitle}"</span>.
                 <span className="ml-2 text-xs text-text-muted/70">
                   (~{Math.floor(totalMinutesLeft)} min left)
                 </span>

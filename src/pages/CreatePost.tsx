@@ -31,7 +31,7 @@ type FileTypeOption = (typeof FILE_TYPE_OPTIONS)[number]['value'];
 export default function CreatePost() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const isPremium = (user?.accountType ?? '').toLowerCase() === 'premium';
+  const isPremium = (user?.accountPlan ?? '').toLowerCase() === 'premium';
   const fileInputRef = useRef<HTMLInputElement>(null);
   const thumbnailInputRef = useRef<HTMLInputElement>(null);
 

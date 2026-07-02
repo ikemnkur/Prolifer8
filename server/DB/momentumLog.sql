@@ -4,7 +4,7 @@
 
 CREATE TABLE `momentumLog` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `dropId` varchar(36) NOT NULL,
+  `postId` varchar(36) NOT NULL,
   `contributionId` varchar(36) DEFAULT NULL COMMENT 'NULL for decay-only ticks',
 
   `momentumBefore` double NOT NULL,
@@ -17,7 +17,7 @@ CREATE TABLE `momentumLog` (
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
   PRIMARY KEY (`id`),
-  KEY `idx_dropId` (`dropId`),
+  KEY `idx_postId` (`postId`),
   KEY `idx_created_at` (`created_at`),
-  CONSTRAINT `fk_momentum_drop` FOREIGN KEY (`dropId`) REFERENCES `drops` (`id`) ON DELETE CASCADE
+  CONSTRAINT `fk_momentum_drop` FOREIGN KEY (`postId`) REFERENCES `drops` (`id`) ON DELETE CASCADE
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci;

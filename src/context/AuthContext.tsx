@@ -29,8 +29,8 @@ const USER_KEY = 'prolifer8_user';
 interface LoginResponse {
   token?: string;
   tokenExpiry?: number;
-  user?: { id: string; username: string; email: string; credits: number; avatar?: string; joined?: string; accountType?: string; accountStatus?: string };
-  accountType?: string;
+  user?: { id: string; username: string; email: string; credits: number; avatar?: string; joined?: string; accountPlan?: string; accountStatus?: string };
+  accountPlan?: string;
   message?: string;
   requires2FASetup?: boolean;
   requiresTOTP?: boolean;
@@ -39,7 +39,7 @@ interface LoginResponse {
 
 interface RegisterResponse {
   success?: boolean;
-  user?: { id: string; username: string; email: string; credits: number; avatar?: string; joined?: string; accountType?: string; accountStatus?: string };
+  user?: { id: string; username: string; email: string; credits: number; avatar?: string; joined?: string; accountPlan?: string; accountStatus?: string };
   token?: string;
   message?: string;
   requires2FASetup?: boolean;
@@ -59,8 +59,8 @@ interface TwoFASetupResponse {
 interface TwoFAEnableResponse {
   token: string;
   tokenExpiry: number;
-  user: { id: string; username: string; email: string; credits: number; accountType?: string };
-  accountType: string;
+  user: { id: string; username: string; email: string; credits: number; accountPlan?: string };
+  accountPlan: string;
   recoveryCodes: string[];
   verification?: unknown;
 }
@@ -68,13 +68,13 @@ interface TwoFAEnableResponse {
 interface TwoFAVerifyResponse {
   token: string;
   tokenExpiry: number;
-  user: { id: string; username: string; email: string; credits: number; accountType?: string };
-  accountType: string;
+  user: { id: string; username: string; email: string; credits: number; accountPlan?: string };
+  accountPlan: string;
   verification?: unknown;
 }
 
 interface UserResponse {
-  user: { id: string; username: string; email: string; credits: number; avatar?: string; dateCreated?: string; verification?: string; accountType?: string; accountStatus?: string };
+  user: { id: string; username: string; email: string; credits: number; avatar?: string; dateCreated?: string; verification?: string; accountPlan?: string; accountStatus?: string };
   token: string;
 }
 
@@ -88,7 +88,7 @@ function mapServerUser(u: {
   joined?: string;
   dateCreated?: string;
   verification?: string;
-  accountType?: string;
+  accountPlan?: string;
   accountStatus?: string;
 }): User {
   return {
@@ -99,7 +99,7 @@ function mapServerUser(u: {
     creditBalance: u.credits,
     joined: u.joined ? new Date(u.joined).getTime() : u.dateCreated ? new Date(u.dateCreated).getTime() : Date.now(),
     verification: u.verification || 'none',
-    accountType: u.accountType || 'free',
+    accountPlan: u.accountPlan || 'free',
     accountStatus: u.accountStatus || 'active',
   };
 }
@@ -139,7 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
  const googleAuth = useCallback(async (credential: string) => {
      const res = await api.post<LoginResponse>('/api/auth/google', { credential });
      if (res.token && res.user) {
-       const mapped = mapServerUser({ ...res.user, accountType: res.user.accountType ?? res.accountType });
+       const mapped = mapServerUser({ ...res.user, accountPlan: res.user.accountPlan ?? res.accountPlan });
        persist(res.token, mapped);
      }
    }, [persist]);
@@ -162,7 +162,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (res.token && res.user) {
-      const mapped = mapServerUser({ ...res.user, accountType: res.user.accountType ?? res.accountType });
+      const mapped = mapServerUser({ ...res.user, accountPlan: res.user.accountPlan ?? res.accountPlan });
       persist(res.token, mapped);
     }
   }, [persist]);
@@ -209,7 +209,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       tempToken: twoFAChallenge.tempToken,
       code,
     });
-    const mapped = mapServerUser({ ...res.user, accountType: res.user.accountType ?? res.accountType });
+    const mapped = mapServerUser({ ...res.user, accountPlan: res.user.accountPlan ?? res.accountPlan });
     persist(res.token, mapped);
     setTwoFAChallenge(null);
     return { recoveryCodes: res.recoveryCodes };
@@ -223,7 +223,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       tempToken: twoFAChallenge.tempToken,
       code,
     });
-    const mapped = mapServerUser({ ...res.user, accountType: res.user.accountType ?? res.accountType });
+    const mapped = mapServerUser({ ...res.user, accountPlan: res.user.accountPlan ?? res.accountPlan });
     persist(res.token, mapped);
     setTwoFAChallenge(null);
   }, [twoFAChallenge, persist]);
@@ -236,7 +236,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       tempToken: twoFAChallenge.tempToken,
       recoveryCode,
     });
-    const mapped = mapServerUser({ ...res.user, accountType: res.user.accountType ?? res.accountType });
+    const mapped = mapServerUser({ ...res.user, accountPlan: res.user.accountPlan ?? res.accountPlan });
     persist(res.token, mapped);
     setTwoFAChallenge(null);
   }, [twoFAChallenge, persist]);

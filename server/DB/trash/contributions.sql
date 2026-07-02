@@ -4,7 +4,7 @@
 
 CREATE TABLE `contributions` (
   `id` varchar(36) NOT NULL COMMENT 'UUID',
-  `dropId` varchar(36) NOT NULL,
+  `postId` varchar(36) NOT NULL,
   `userId` varchar(10) NOT NULL,
 
   `amount` int NOT NULL COMMENT 'Credits contributed',
@@ -24,10 +24,10 @@ CREATE TABLE `contributions` (
   `isVerified` bit(1) DEFAULT NULL COMMENT '1 if contributing user was verified at time of contribution',
 
   PRIMARY KEY (`id`),
-  KEY `idx_dropId` (`dropId`),
+  KEY `idx_postId` (`postId`),
   KEY `idx_userId` (`userId`),
-  KEY `idx_dropId_userId` (`dropId`, `userId`),
+  KEY `idx_postId_userId` (`postId`, `userId`),
   KEY `idx_created_at` (`created_at`),
-  CONSTRAINT `fk_contributions_drop` FOREIGN KEY (`dropId`) REFERENCES `drops` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_contributions_drop` FOREIGN KEY (`postId`) REFERENCES `drops` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_contributions_user` FOREIGN KEY (`userId`) REFERENCES `userData` (`id`) ON DELETE CASCADE
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci;

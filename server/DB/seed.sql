@@ -20,7 +20,7 @@ SET @bcrypt_hash = '$2b$10$KIXQK4VxoOVsm7gKXMZ0/.1GhFJKPOcpjGvVj/dShBdwBJPwreT8G
 -- -----------------------------------------------------------
 INSERT INTO `userData`
   (`id`, `username`, `email`, `passwordHash`, `credits`, `firstName`, `lastName`,
-   `accountType`, `totalDropsCreated`, `totalCreditsEarned`, `creatorRating`,
+   `accountPlan`, `totalDropsCreated`, `totalCreditsEarned`, `creatorRating`,
    `bio`, `profilePicture`, `verification`, `createdAt`, `updatedAt`)
 VALUES
   -- Primary test user
@@ -45,7 +45,7 @@ VALUES
 -- c8 (echo_wave) — separated because it's the last one
 INSERT INTO `userData`
   (`id`, `username`, `email`, `passwordHash`, `credits`, `firstName`, `lastName`,
-   `accountType`, `totalDropsCreated`, `totalCreditsEarned`, `creatorRating`,
+   `accountPlan`, `totalDropsCreated`, `totalCreditsEarned`, `creatorRating`,
    `bio`, `profilePicture`, `verification`, `createdAt`, `updatedAt`)
 VALUES
   ('c8',        'echo_wave',         'echo@drauwpr.com',          @bcrypt_hash,  1500,   'Echo',    'Wave',     'free',     0,       0,  58.00, 'Audio engineer and sound enthusiast.',                                       NULL, 'verified', UNIX_TIMESTAMP(NOW() - INTERVAL 10 DAY) * 1000, UNIX_TIMESTAMP() * 1000);
@@ -128,7 +128,7 @@ VALUES
 --  3. CONTRIBUTIONS (16 records across the 4 drops)
 -- -----------------------------------------------------------
 INSERT INTO `contributions`
-  (`id`, `dropId`, `userId`, `amount`,
+  (`id`, `postId`, `userId`, `amount`,
    `momentumBefore`, `momentumAfter`, `burnRateAfter`,
    `waitPenaltyPct`, `penaltyAmount`, `isRefunded`, `created_at`, `isVerified`)
 VALUES
@@ -161,7 +161,7 @@ VALUES
 --  4. MOMENTUM LOG (one per drop — last contribution event)
 -- -----------------------------------------------------------
 INSERT INTO `momentumLog`
-  (`dropId`, `contributionId`,
+  (`postId`, `contributionId`,
    `momentumBefore`, `momentumAfter`, `burnRateBefore`, `burnRateAfter`,
    `clockSecondsRemaining`, `eventType`)
 VALUES
@@ -175,7 +175,7 @@ VALUES
 --  5. REVIEWS (for drop-3 which is "dropped" / released)
 -- -----------------------------------------------------------
 INSERT INTO `dropReviews`
-  (`id`, `dropId`, `userId`, `comment`, `liked`, `rating`, `isEdited`, `isHidden`, `created_at`)
+  (`id`, `postId`, `userId`, `comment`, `liked`, `rating`, `isEdited`, `isHidden`, `created_at`)
 VALUES
   ('rev-01', 'drop-3', 'c1',
    'Incredible focus app — the ambient soundscapes are next-level. Using it every day now.',
@@ -194,7 +194,7 @@ VALUES
 --  6. DOWNLOADS (4 users downloaded drop-3)
 -- -----------------------------------------------------------
 INSERT INTO `dropDownloads`
-  (`id`, `dropId`, `userId`, `pricePaid`, `basePrice`,
+  (`id`, `postId`, `userId`, `pricePaid`, `basePrice`,
    `contributorDiscount`, `timeDecayDiscount`, `volumeDecayDiscount`,
    `downloadNumber`, `created_at`)
 VALUES
@@ -207,7 +207,7 @@ VALUES
 -- -----------------------------------------------------------
 --  7. FAVORITES / WAITLIST
 -- -----------------------------------------------------------
-INSERT INTO `dropFavorites` (`dropId`, `userId`, `notifyOnRelease`, `notifyOnGoalMet`)
+INSERT INTO `dropFavorites` (`postId`, `userId`, `notifyOnRelease`, `notifyOnGoalMet`)
 VALUES
   ('drop-1', 'c1', 1, 0),
   ('drop-1', 'c3', 1, 1),
@@ -253,7 +253,7 @@ VALUES
 -- -----------------------------------------------------------
 INSERT INTO `walletTransactions`
   (`id`, `userId`, `type`, `amount`, `balanceAfter`,
-   `relatedDropId`, `relatedPurchaseId`, `relatedContributionId`,
+   `relatedpostId`, `relatedPurchaseId`, `relatedContributionId`,
    `description`, `created_at`)
 VALUES
   -- Credit purchases (positive)
@@ -296,7 +296,7 @@ VALUES
 --  11. CONTRIBUTOR REWARDS (top contributors on drop-3)
 -- -----------------------------------------------------------
 INSERT INTO `contributorRewards`
-  (`dropId`, `userId`, `tier`, `totalContributed`, `percentOfGoal`,
+  (`postId`, `userId`, `tier`, `totalContributed`, `percentOfGoal`,
    `discountPct`, `fastDownload`, `commissionPct`, `shoutout`, `badgeAwarded`)
 VALUES
   ('drop-3', 'c3', 'gold',     20000, 20.00, 20.00, 1, 2.00, 1, 'gold-contributor'),
@@ -320,7 +320,7 @@ VALUES
 -- -----------------------------------------------------------
 INSERT INTO `notifications`
   (`id`, `userId`, `type`, `title`, `message`, `priority`, `category`,
-   `relatedDropId`, `actionUrl`, `isRead`)
+   `relatedpostId`, `actionUrl`, `isRead`)
 VALUES
   ('notif-01', 'creator-1', 'contribution', 'New contribution!',
    'blaze_runner contributed 25,000 credits to Nebula Quest.',

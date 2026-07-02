@@ -566,7 +566,7 @@ server.post(PROXY + '/api/auth/login', async (req, res) => {
       token,
       tokenExpiry: new Date(Date.now() + 7 * 24 * 3600 * 1000),
       user: userData,
-      accountType: user.accountType,
+      accountPlan: user.accountPlan,
       message: 'Login successful',
     });
   } catch (error) {
@@ -642,7 +642,7 @@ server.post(PROXY + '/api/auth/google', async (req, res) => {
       id: userId,
       loginStatus: true,
       lastLogin: currentDateTime,
-      accountType: 'free',
+      accountPlan: 'free',
       username,
       email,
       firstName: given_name || '',
@@ -758,7 +758,7 @@ server.post(PROXY + '/api/user', authenticateToken, async (req, res) => {
       planExpiry: user.planExpiry,
       token: token,
       tokenExpiry: new Date(Date.now() + 7200 * 1000),
-      accountType: user.accountType,
+      accountPlan: user.accountPlan,
       message: 'Login successful'
     });
     // }
@@ -779,12 +779,70 @@ server.post(PROXY + '/api/user', authenticateToken, async (req, res) => {
 });
 
 
+const DEFAULT_EMAIL_NOTIFICATION_PREFS = {
+  marketing: false,
+  productUpdates: true,
+  security: true,
+  activity: true,
+};
+
+const ACCOUNT_TYPE_VALUES = new Set(['personal', 'creator', 'business', 'private']);
+let accountSettingsColumnsEnsured = false;
+const pendingPhoneOtps = new Map();
+const pendingAccount2FASetups = new Map();
+
+function normalizeAccountType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ACCOUNT_TYPE_VALUES.has(normalized) ? normalized : null;
+}
+
+function parseEmailNotificationPrefs(raw) {
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {});
+    return {
+      marketing: Boolean(parsed.marketing),
+      productUpdates: parsed.productUpdates == null ? true : Boolean(parsed.productUpdates),
+      security: parsed.security == null ? true : Boolean(parsed.security),
+      activity: parsed.activity == null ? true : Boolean(parsed.activity),
+    };
+  } catch {
+    return { ...DEFAULT_EMAIL_NOTIFICATION_PREFS };
+  }
+}
+
+async function ensureAccountSettingsColumns() {
+  if (accountSettingsColumnsEnsured) return;
+
+  const [rows] = await knex.raw(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'userData'
+       AND COLUMN_NAME IN ('accountType', 'smsAlertsEnabled', 'phoneVerified', 'emailNotifications')`
+  );
+
+  const existing = new Set((rows || []).map((r) => r.COLUMN_NAME));
+  const alters = [];
+
+  if (!existing.has('accountType')) alters.push('ADD COLUMN accountType VARCHAR(32) DEFAULT NULL');
+  if (!existing.has('smsAlertsEnabled')) alters.push('ADD COLUMN smsAlertsEnabled TINYINT(1) NOT NULL DEFAULT 0');
+  if (!existing.has('phoneVerified')) alters.push('ADD COLUMN phoneVerified TINYINT(1) NOT NULL DEFAULT 0');
+  if (!existing.has('emailNotifications')) alters.push('ADD COLUMN emailNotifications TEXT DEFAULT NULL');
+
+  if (alters.length > 0) {
+    await knex.raw(`ALTER TABLE userData ${alters.join(', ')}`);
+  }
+
+  accountSettingsColumnsEnsured = true;
+}
+
 // Update profile fields (bio, banner, avatar, social links, intro video)
 server.put(PROXY + '/api/users/profile', authenticateToken, async (req, res) => {
   console.log(`PUT /api/users/profile — user: ${req.user?.email}`);
   try {
     const { email } = req.user; // Get email from authenticated token
     const { bio, bioVideoUrl, bannerUrl, profilePicture, socialLinks } = req.body;
+
+    const normalizedBannerRef = normalizeStoredAssetReference(bannerUrl);
 
     // Validate input (you can add more validation as needed)
     if (!email) {
@@ -794,13 +852,15 @@ server.put(PROXY + '/api/users/profile', authenticateToken, async (req, res) => 
       });
     }
 
+    console.log("Banner URL:", bannerUrl, "Normalized:", normalizedBannerRef);
+
     // Update user profile in the database
     await knex('userData')
       .where('email', email)
       .update({
         bio: bio || '',
         bioVideoUrl: bioVideoUrl || null,
-        bannerUrl: bannerUrl || null,
+        bannerUrl: normalizedBannerRef || null,
         profilePicture: profilePicture || null,
         socialLinks: JSON.stringify(socialLinks || {})
       });
@@ -818,12 +878,265 @@ server.put(PROXY + '/api/users/profile', authenticateToken, async (req, res) => 
   }
 });
 
+server.post(PROXY + '/api/account/settings', authenticateToken, async (req, res) => {
+  try {
+    await ensureAccountSettingsColumns();
+
+    const userId = String(req.user?.id || '').trim();
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+    const row = await knex('userData')
+      .where('id', userId)
+      .select('accountType', 'accountPlan', 'phoneNumber', 'smsAlertsEnabled', 'twoFactorEnabled', 'emailNotifications')
+      .first();
+
+    if (!row) return res.status(404).json({ message: 'User not found' });
+
+    return res.json({
+      phoneNumber: row.phoneNumber || '',
+      smsAlertsEnabled: Boolean(row.smsAlertsEnabled),
+      accountType: row.accountType || row.accountPlan || 'personal',
+      twoFactorEnabled: Boolean(row.twoFactorEnabled),
+      emailNotifications: parseEmailNotificationPrefs(row.emailNotifications),
+    });
+  } catch (error) {
+    console.error('POST /api/account/settings error:', error);
+    return res.status(500).json({ message: 'Failed to load account settings' });
+  }
+});
+
+server.post(PROXY + '/api/account/account-type', authenticateToken, async (req, res) => {
+  try {
+    await ensureAccountSettingsColumns();
+
+    const userId = String(req.user?.id || '').trim();
+    const accountType = normalizeAccountType(req.body?.accountPlan || req.body?.accountType);
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    if (!accountType) return res.status(400).json({ message: 'Invalid account type' });
+
+    await knex('userData').where('id', userId).update({ accountType });
+    return res.json({ success: true, accountType });
+  } catch (error) {
+    console.error('POST /api/account/account-type error:', error);
+    return res.status(500).json({ message: 'Failed to update account type' });
+  }
+});
+
+server.post(PROXY + '/api/account/phone/send-otp', authenticateToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || '').trim();
+    const phoneNumber = String(req.body?.phoneNumber || '').trim();
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    if (!phoneNumber || phoneNumber.length < 7) {
+      return res.status(400).json({ message: 'Enter a valid phone number' });
+    }
+
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    pendingPhoneOtps.set(userId, {
+      phoneNumber,
+      code,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    console.log(`[SMS OTP][DEV] userId=${userId} phone=${phoneNumber} code=${code}`);
+    return res.json({ success: true, message: 'Verification code sent' });
+  } catch (error) {
+    console.error('POST /api/account/phone/send-otp error:', error);
+    return res.status(500).json({ message: 'Failed to send verification code' });
+  }
+});
+
+server.post(PROXY + '/api/account/phone/verify-otp', authenticateToken, async (req, res) => {
+  try {
+    await ensureAccountSettingsColumns();
+
+    const userId = String(req.user?.id || '').trim();
+    const phoneNumber = String(req.body?.phoneNumber || '').trim();
+    const code = String(req.body?.code || '').trim();
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+    const pending = pendingPhoneOtps.get(userId);
+    if (!pending || pending.expiresAt < Date.now()) {
+      pendingPhoneOtps.delete(userId);
+      return res.status(400).json({ message: 'Verification code expired. Request a new code.' });
+    }
+
+    if (pending.phoneNumber !== phoneNumber) {
+      return res.status(400).json({ message: 'Phone number does not match verification request' });
+    }
+
+    if (pending.code !== code) {
+      return res.status(400).json({ message: 'Invalid verification code' });
+    }
+
+    await knex('userData')
+      .where('id', userId)
+      .update({ phoneNumber, phoneVerified: 1 });
+
+    pendingPhoneOtps.delete(userId);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('POST /api/account/phone/verify-otp error:', error);
+    return res.status(500).json({ message: 'Failed to verify phone number' });
+  }
+});
+
+server.post(PROXY + '/api/account/sms-alerts', authenticateToken, async (req, res) => {
+  try {
+    await ensureAccountSettingsColumns();
+
+    const userId = String(req.user?.id || '').trim();
+    const smsAlertsEnabled = Boolean(req.body?.smsAlertsEnabled);
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+    await knex('userData').where('id', userId).update({ smsAlertsEnabled: smsAlertsEnabled ? 1 : 0 });
+    return res.json({ success: true, smsAlertsEnabled });
+  } catch (error) {
+    console.error('POST /api/account/sms-alerts error:', error);
+    return res.status(500).json({ message: 'Failed to save SMS preferences' });
+  }
+});
+
+server.post(PROXY + '/api/account/email-notifications', authenticateToken, async (req, res) => {
+  try {
+    await ensureAccountSettingsColumns();
+
+    const userId = String(req.user?.id || '').trim();
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+    const prefs = parseEmailNotificationPrefs(req.body?.emailNotifications);
+    await knex('userData').where('id', userId).update({ emailNotifications: JSON.stringify(prefs) });
+    return res.json({ success: true, emailNotifications: prefs });
+  } catch (error) {
+    console.error('POST /api/account/email-notifications error:', error);
+    return res.status(500).json({ message: 'Failed to save email notification preferences' });
+  }
+});
+
+server.post(PROXY + '/api/account/change-password', authenticateToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || '').trim();
+    const currentPassword = String(req.body?.currentPassword || '');
+    const newPassword = String(req.body?.newPassword || '');
+
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'Current and new passwords are required' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'New password must be at least 6 characters' });
+    }
+
+    const userRow = await knex('userData').where('id', userId).select('passwordHash').first();
+    if (!userRow) return res.status(404).json({ message: 'User not found' });
+
+    if (!userRow.passwordHash) {
+      return res.status(400).json({ message: 'This account does not have a local password. Use password reset instead.' });
+    }
+
+    const isValid = await bcrypt.compare(currentPassword, userRow.passwordHash);
+    if (!isValid) {
+      return res.status(400).json({ message: 'Current password is incorrect' });
+    }
+
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(newPassword, saltRounds);
+    await knex('userData').where('id', userId).update({ passwordHash });
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('POST /api/account/change-password error:', error);
+    return res.status(500).json({ message: 'Failed to change password' });
+  }
+});
+
+server.post(PROXY + '/api/account/2fa/setup', authenticateToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || '').trim();
+    const email = String(req.user?.email || '').trim();
+    if (!userId || !email) return res.status(401).json({ message: 'Unauthorized' });
+
+    const secret = authenticator.generateSecret();
+    const otpauthUrl = authenticator.keyuri(email, 'Prolifer8', secret);
+    const qrUrl = await QRCode.toDataURL(otpauthUrl);
+
+    pendingAccount2FASetups.set(userId, {
+      secret,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    return res.json({ qrUrl, secret });
+  } catch (error) {
+    console.error('POST /api/account/2fa/setup error:', error);
+    return res.status(500).json({ message: 'Failed to start 2FA setup' });
+  }
+});
+
+server.post(PROXY + '/api/account/2fa/enable', authenticateToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || '').trim();
+    const code = String(req.body?.code || '').trim();
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+    if (!code) return res.status(400).json({ message: 'Code is required' });
+
+    const pending = pendingAccount2FASetups.get(userId);
+    if (!pending || pending.expiresAt < Date.now()) {
+      pendingAccount2FASetups.delete(userId);
+      return res.status(400).json({ message: '2FA setup expired. Start setup again.' });
+    }
+
+    if (!authenticator.verify({ token: code, secret: pending.secret })) {
+      return res.status(400).json({ message: 'Invalid authenticator code' });
+    }
+
+    const recoveryCodes = Array.from({ length: 8 }, () =>
+      [
+        crypto.randomBytes(2).toString('hex'),
+        crypto.randomBytes(2).toString('hex'),
+        crypto.randomBytes(2).toString('hex'),
+        crypto.randomBytes(2).toString('hex'),
+      ].join('-').toUpperCase()
+    );
+
+    await knex('userData').where('id', userId).update({
+      twoFactorEnabled: true,
+      twoFactorSecret: pending.secret,
+      recoveryCodes: JSON.stringify(recoveryCodes),
+    });
+
+    pendingAccount2FASetups.delete(userId);
+    return res.json({ success: true, recoveryCodes });
+  } catch (error) {
+    console.error('POST /api/account/2fa/enable error:', error);
+    return res.status(500).json({ message: 'Failed to enable 2FA' });
+  }
+});
+
+server.post(PROXY + '/api/account/2fa/disable', authenticateToken, async (req, res) => {
+  try {
+    const userId = String(req.user?.id || '').trim();
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+    await knex('userData').where('id', userId).update({
+      twoFactorEnabled: false,
+      twoFactorSecret: '',
+      recoveryCodes: null,
+    });
+
+    pendingAccount2FASetups.delete(userId);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('POST /api/account/2fa/disable error:', error);
+    return res.status(500).json({ message: 'Failed to disable 2FA' });
+  }
+});
+
 
 
 // Custom registration route
 server.post(PROXY + '/api/auth/register', async (req, res) => {
   try {
-    const { username, email, password, firstName, lastName, accountType, birthDate } = req.body;
+    const { username, email, password, firstName, lastName, accountPlan, birthDate } = req.body;
 
     // Validate required fields
     if (!username || !email || !password || !firstName) {
@@ -904,7 +1217,7 @@ server.post(PROXY + '/api/auth/register', async (req, res) => {
       id: userId,
       loginStatus: true,
       lastLogin: currentDateTime,
-      accountType: accountType || 'free',
+      accountPlan: accountPlan || 'free',
       username: username,
       email: email,
       firstName: firstName,
@@ -930,12 +1243,12 @@ server.post(PROXY + '/api/auth/register', async (req, res) => {
     };
 
     // await pool.execute(
-    //   'INSERT INTO userData (id, loginStatus, lastLogin, accountType, username, email, firstName, lastName, phoneNumber, birthDate, encryptionKey, credits, reportCount, isBanned, banReason, banDate, banDuration, createdAt, updatedAt, passwordHash, twoFactorEnabled, twoFactorSecret, recoveryCodes, profilePicture, bio, socialLinks, verification, amount1, amount2, cryptoAmounts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    //   'INSERT INTO userData (id, loginStatus, lastLogin, accountPlan, username, email, firstName, lastName, phoneNumber, birthDate, encryptionKey, credits, reportCount, isBanned, banReason, banDate, banDuration, createdAt, updatedAt, passwordHash, twoFactorEnabled, twoFactorSecret, recoveryCodes, profilePicture, bio, socialLinks, verification, amount1, amount2, cryptoAmounts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     //   [
     //     newUser.id,
     //     newUser.loginStatus,
     //     newUser.lastLogin,
-    //     newUser.accountType,
+    //     newUser.accountPlan,
     //     newUser.username,
     //     newUser.email,
     //     newUser.firstName,
@@ -974,7 +1287,7 @@ server.post(PROXY + '/api/auth/register', async (req, res) => {
       id: newUser.id,
       loginStatus: newUser.loginStatus,
       lastLogin: newUser.lastLogin,
-      accountType: newUser.accountType,
+      accountPlan: newUser.accountPlan,
       username: newUser.username,
       email: newUser.email,
       firstName: newUser.firstName,
@@ -1053,7 +1366,7 @@ async function buildFullAuthResponse(userId) {
     token,
     tokenExpiry: new Date(Date.now() + 7 * 24 * 3600 * 1000),
     user: { id: user.id, username: user.username, email: user.email, credits: user.credits },
-    accountType: user.accountType,
+    accountPlan: user.accountPlan,
     message: 'Login successful',
     verification: {
       verified: false,
@@ -1499,18 +1812,19 @@ server.post(PROXY + '/api/promo-submissions', authenticateToken, async (req, res
 
   let busboy;
   try {
-    busboy = Busboy({ headers: req.headers, limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
+    busboy = Busboy({ headers: req.headers, limits: { fileSize: 10 * 1024 * 1024, files: 2 } });
   } catch (e) {
     console.error('Promo submission init error:', e);
     return res.status(400).json({ message: 'Invalid multipart/form-data request' });
   }
 
+  const submissionId = uuidv4();
   const folderName = String(req.user?.username || req.user?.id || 'user').replace(/[^a-zA-Z0-9_-]/g, '_');
-  const uploadDir = path.join(__dirname, 'uploads', 'promo-submissions', folderName);
-  fs.mkdirSync(uploadDir, { recursive: true });
+  const submissionFolder = `uploads/promo-submissions/${folderName}/${submissionId}`;
 
   const fields = {};
   let assetPath = null;
+  let thumbnailImg = null;
   let pendingWrites = 0;
   let uploadFinished = false;
   let responded = false;
@@ -1521,6 +1835,7 @@ server.post(PROXY + '/api/promo-submissions', authenticateToken, async (req, res
 
     try {
       const submissionType = String(fields.submissionType || '').trim();
+      const normalizedSubmissionType = submissionType === 'drop_sponsorship' ? 'post_sponsorship' : submissionType;
       const mediaType = String(fields.mediaType || '').trim();
       const title = String(fields.title || '').trim();
       const description = String(fields.description || '').trim();
@@ -1529,10 +1844,10 @@ server.post(PROXY + '/api/promo-submissions', authenticateToken, async (req, res
       const mediaUrl = String(fields.mediaUrl || '').trim() || null;
       const ctaText = String(fields.ctaText || '').trim() || null;
       const contactEmail = String(fields.contactEmail || req.user?.email || '').trim();
-      const budgetUsd = Number(fields.budgetUsd || 0) || 0;
+      const budgetCredits = Number(fields.budgetCredits || 0) || 0;
       const tags = String(fields.tags || '').trim() || null;
 
-      if (!['ad', 'drop_sponsorship'].includes(submissionType)) {
+      if (!['ad', 'post_sponsorship'].includes(normalizedSubmissionType)) {
         return res.status(400).json({ message: 'Invalid submission type' });
       }
       if (!['image', 'video_link', 'audio'].includes(mediaType)) {
@@ -1544,18 +1859,20 @@ server.post(PROXY + '/api/promo-submissions', authenticateToken, async (req, res
       if (mediaType === 'video_link' && !mediaUrl) {
         return res.status(400).json({ message: 'A video link is required for video submissions' });
       }
-      if ((mediaType === 'image' || mediaType === 'audio') && !assetPath && !mediaUrl) {
-        return res.status(400).json({ message: 'Please upload a file or provide a media link' });
+      if (!thumbnailImg) {
+        return res.status(400).json({ message: 'A thumbnail image is required for promo submissions' });
+      }
+      if (mediaType === 'audio' && !assetPath && !mediaUrl) {
+        return res.status(400).json({ message: 'Please upload an audio file or provide an audio link' });
       }
 
-      const id = uuidv4();
       await knex('promoSubmissions').insert({
-        id,
+        id: submissionId,
         userId: String(req.user?.id || ''),
         username: String(req.user?.username || ''),
         email: String(req.user?.email || ''),
         contactEmail,
-        submissionType,
+        submissionType: normalizedSubmissionType,
         mediaType,
         title,
         description,
@@ -1563,15 +1880,16 @@ server.post(PROXY + '/api/promo-submissions', authenticateToken, async (req, res
         target_url: targetUrl,
         mediaUrl,
         ctaText,
-        budgetUsd,
-        assetPath,
+        budgetCredits,
+        assetPath: mediaType === 'audio' ? assetPath : null,
+        thumbnailImg,
         tags,
         status: 'pending',
       });
 
       return res.status(200).json({
         success: true,
-        id,
+        id: submissionId,
         message: 'Promo submission received and queued for admin review',
       });
     } catch (err) {
@@ -1585,32 +1903,76 @@ server.post(PROXY + '/api/promo-submissions', authenticateToken, async (req, res
   });
 
   busboy.on('file', (fieldname, file, info) => {
-    if (fieldname !== 'asset') {
+    if (fieldname !== 'asset' && fieldname !== 'thumbnail') {
       file.resume();
       return;
     }
 
     pendingWrites++;
-    const originalName = String(info?.filename || 'asset').trim() || 'asset';
+    const originalName = String(info?.filename || fieldname).trim() || fieldname;
     const ext = path.extname(originalName) || '.bin';
-    const localFileName = `${Date.now()}_${uuidv4()}${ext}`;
-    const localPath = path.join(uploadDir, localFileName);
-    const writeStream = fs.createWriteStream(localPath);
+    const objectKey = `${submissionFolder}/${fieldname}_${Date.now()}_${uuidv4()}${ext}`;
+    const contentType = String(info?.mimeType || '').trim() || 'application/octet-stream';
+    const chunks = [];
 
-    file.pipe(writeStream);
-
-    writeStream.on('finish', () => {
-      assetPath = '/' + path.relative(__dirname, localPath).replace(/\\/g, '/');
-      pendingWrites--;
-      void finalize();
-    });
-
-    writeStream.on('error', (err) => {
-      console.error('Promo asset write error:', err);
+    if (fieldname === 'thumbnail' && !/^image\//i.test(contentType)) {
+      file.resume();
       pendingWrites--;
       if (!responded) {
         responded = true;
-        return res.status(500).json({ message: 'Failed to store uploaded asset' });
+        return res.status(400).json({ message: 'Thumbnail must be an image file' });
+      }
+      return;
+    }
+
+    file.on('data', (chunk) => {
+      chunks.push(chunk);
+    });
+
+    file.on('end', async () => {
+      try {
+        if (!storage || !BUCKET_NAME) {
+          pendingWrites--;
+          if (!responded) {
+            responded = true;
+            return res.status(500).json({ message: 'Cloud storage is not configured for promo uploads' });
+          }
+          return;
+        }
+
+        const body = Buffer.concat(chunks);
+        await storage.send(new PutObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: objectKey,
+          Body: body,
+          ContentType: contentType,
+        }));
+
+        if (fieldname === 'thumbnail') {
+          // Persist a directly renderable Cloudflare URL for promo thumbnails.
+          thumbnailImg = publicUrl(BUCKET_NAME, objectKey);
+        } else {
+          // Persist a directly renderable Cloudflare URL for promo audio assets.
+          assetPath = publicUrl(BUCKET_NAME, objectKey);
+        }
+        pendingWrites--;
+        void finalize();
+      } catch (err) {
+        console.error('Promo asset upload error:', err);
+        pendingWrites--;
+        if (!responded) {
+          responded = true;
+          return res.status(500).json({ message: 'Failed to upload promo asset to cloud storage' });
+        }
+      }
+    });
+
+    file.on('error', (err) => {
+      console.error('Promo asset stream error:', err);
+      pendingWrites--;
+      if (!responded) {
+        responded = true;
+        return res.status(500).json({ message: 'Failed to read uploaded promo asset' });
       }
     });
   });
@@ -1651,7 +2013,7 @@ server.get(PROXY + '/api/promo-submissions/me', authenticateToken, async (req, r
 
       acc.total += 1;
       if (r.submissionType === 'ad') acc.ads += 1;
-      if (r.submissionType === 'drop_sponsorship') acc.sponsorships += 1;
+      if (r.submissionType === 'drop_sponsorship' || r.submissionType === 'post_sponsorship') acc.sponsorships += 1;
       acc.impressions += impressions;
       acc.clicks += clicks;
       acc.likes += likes;
@@ -1671,6 +2033,15 @@ server.get(PROXY + '/api/promo-submissions/me', authenticateToken, async (req, r
 
     const ctr = summary.impressions > 0 ? (summary.clicks / summary.impressions) * 100 : 0;
 
+    const resolvePromoAssetUrl = (value) => {
+      const raw = String(value || '').trim();
+      if (!raw) return raw;
+      if (/^https?:\/\//i.test(raw)) return raw;
+
+      const objectPath = normalizeStoredAssetReference(raw);
+      return objectPath ? publicUrl(BUCKET_NAME, objectPath) : raw;
+    };
+
     res.json({
       summary: {
         ...summary,
@@ -1681,6 +2052,10 @@ server.get(PROXY + '/api/promo-submissions/me', authenticateToken, async (req, r
         const clicks = toNum(r.clicks);
         return {
           ...r,
+          assetPath: resolvePromoAssetUrl(r.assetPath),
+          thumbnailImg: resolvePromoAssetUrl(r.thumbnailImg),
+          thumbnailPath: resolvePromoAssetUrl(r.thumbnailPath || r.thumbnailImg),
+          mediaUrl: resolvePromoAssetUrl(r.mediaUrl),
           ctrPct: impressions > 0 ? Number(((clicks / impressions) * 100).toFixed(2)) : 0,
         };
       }),
@@ -1708,6 +2083,40 @@ server.delete(PROXY + '/api/promo-submissions/:id', authenticateToken, async (re
   }
 });
 
+server.patch(PROXY + '/api/promo-submissions/:id/pause', authenticateToken, async (req, res) => {
+  try {
+    await ensurePromoSubmissionsTable();
+    const id = String(req.params.id || '');
+    const userId = String(req.user?.id || '');
+    const shouldPause = Boolean(req.body?.paused);
+
+    const row = await knex('promoSubmissions').where({ id, userId }).first();
+    if (!row) return res.status(404).json({ error: 'Promo item not found' });
+
+    const currentStatus = String(row.status || '').toLowerCase();
+    const nextStatus = shouldPause ? 'paused' : 'approved';
+
+    if (shouldPause) {
+      if (currentStatus !== 'approved') {
+        return res.status(400).json({ error: 'Only approved promos can be paused' });
+      }
+    } else {
+      if (currentStatus !== 'paused') {
+        return res.status(400).json({ error: 'Only paused promos can be resumed' });
+      }
+    }
+
+    await knex('promoSubmissions')
+      .where({ id, userId })
+      .update({ status: nextStatus });
+
+    res.json({ success: true, id, status: nextStatus });
+  } catch (err) {
+    console.error('PATCH /api/promo-submissions/:id/pause error:', err);
+    res.status(500).json({ error: 'Failed to update promo status' });
+  }
+});
+
 server.get(PROXY + '/api/promo-submissions/me/export', authenticateToken, async (req, res) => {
   try {
     await ensurePromoSubmissionsTable();
@@ -1718,7 +2127,7 @@ server.get(PROXY + '/api/promo-submissions/me/export', authenticateToken, async 
       .select('*');
 
     const headers = [
-      'id', 'submissionType', 'status', 'title', 'targetPostId', 'budgetUsd',
+      'id', 'submissionType', 'status', 'title', 'targetPostId', 'budgetCredits',
       'impressions', 'clicks', 'likes', 'neutrals', 'dislikes', 'tags', 'created_at', 'updated_at',
     ];
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -1824,8 +2233,9 @@ const ensurePromoSubmissionsTable = async () => {
       mediaUrl VARCHAR(500),
       targetUrl VARCHAR(500),
       ctaText VARCHAR(255) DEFAULT NULL,
-      budgetUsd DECIMAL(10,2) DEFAULT 0,
+      budgetCredits DECIMAL(10,2) DEFAULT 0,
       assetPath VARCHAR(255) DEFAULT NULL,
+      thumbnailImg VARCHAR(255) DEFAULT NULL,
       status VARCHAR(40) NOT NULL DEFAULT 'pending',
       adminNotes TEXT,
       clicks INT DEFAULT 0,
@@ -1848,7 +2258,7 @@ const ensurePromoSubmissionsTable = async () => {
     `SELECT COLUMN_NAME FROM information_schema.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE()
        AND TABLE_NAME = 'promoSubmissions'
-       AND COLUMN_NAME IN ('clicks', 'dislikes', 'likes', 'neutrals', 'impressions', 'billedImpressions', 'billedClicks', 'tags')`
+       AND COLUMN_NAME IN ('clicks', 'dislikes', 'likes', 'neutrals', 'impressions', 'billedImpressions', 'billedClicks', 'tags', 'thumbnailImg')`
   );
 
   const existing = new Set((cols || []).map((col) => col.COLUMN_NAME));
@@ -1861,6 +2271,7 @@ const ensurePromoSubmissionsTable = async () => {
   if (!existing.has('billedImpressions')) alters.push('ADD COLUMN billedImpressions INT DEFAULT 0');
   if (!existing.has('billedClicks')) alters.push('ADD COLUMN billedClicks INT DEFAULT 0');
   if (!existing.has('tags')) alters.push('ADD COLUMN tags TINYTEXT');
+  if (!existing.has('thumbnailImg')) alters.push('ADD COLUMN thumbnailImg VARCHAR(255) DEFAULT NULL');
 
   if (alters.length > 0) {
     await knex.raw(`ALTER TABLE promoSubmissions ${alters.join(', ')}`);
@@ -1915,9 +2326,9 @@ async function runPromoBillingCron() {
           .where('id', livePromo.userId)
           .update({ credits: newBalance });
 
-        const rawDropId = livePromo.targetPostId || null;
-        const relatedDropId = rawDropId
-          ? (rawDropId.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i) || [])[0] || null
+        const rawpostId = livePromo.targetPostId || null;
+        const relatedpostId = rawpostId
+          ? (rawpostId.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i) || [])[0] || null
           : null;
 
         await safeInsertWalletTransaction({
@@ -1926,7 +2337,7 @@ async function runPromoBillingCron() {
           type: 'admin_adjustment',
           amount: -chargeAmount,
           balanceAfter: newBalance,
-          relatedDropId,
+          relatedpostId,
           description: `Promo charge: ${livePromo.title || 'Promotion'} | +${deltaImpressions} impressions, +${deltaClicks} clicks`,
           created_at: trx.fn.now(),
         }, trx);
@@ -2729,7 +3140,7 @@ async function CreateNotification(type, title, message, category, username, prio
 //  const newUser = {
 //   loginStatus: true,
 //   lastLogin: new Date().toISOString(),
-//   accountType: accountType || 'buyer',
+//   accountPlan: accountPlan || 'buyer',
 //   username: username,
 //   email: email,
 //   firstName: name.split(' ')[0] || name,
@@ -2794,7 +3205,7 @@ server.post(PROXY + '/api/userData', async (req, res) => {
       id: userId,
       loginStatus: newUser.loginStatus,
       lastLogin: formatDateTimeForMySQL(newUser.lastLogin),
-      accountType: newUser.accountType,
+      accountPlan: newUser.accountPlan,
       username: newUser.username,
       email: newUser.email,
       firstName: newUser.firstName,
@@ -3436,6 +3847,8 @@ server.post(PROXY + '/api/users/profile-upload-url', authenticateToken, async (r
     const uploadUrl = await getSignedUrl(storage, command, { expiresIn: 300 });
     const fileUrl = publicUrl(BUCKET_NAME, objectKey);
 
+    console.log(`Successfully generated upload URL for user ${userId} (${kind}): ${fileUrl}`);
+
     return res.json({
       success: true,
       uploadUrl,
@@ -3604,7 +4017,7 @@ server.post(PROXY + '/api/profile-picture/:username', authenticateToken, async (
 /**
  * POST /api/profile-banner/:username
  * Accepts a multipart/form-data upload for a user's profile banner.
- * Stores the image in Google Cloud Storage and updates the user's profileBanner field.
+ * Stores the image in Cloudflare R2 and updates userData.bannerUrl with the object path.
  */
 server.post(PROXY + '/api/profile-banner/:username', authenticateToken, async (req, res) => {
   const { username } = req.params;
@@ -3681,19 +4094,21 @@ server.post(PROXY + '/api/profile-banner/:username', authenticateToken, async (r
         }));
 
         const imageUrl = publicUrl(BUCKET_NAME, gcsFilePath);
+        const bannerPath = gcsFilePath;
 
         // Update user bannerUrl in DB
         await knex('userData')
           .where('username', username)
-          .update({ bannerUrl: imageUrl });
+          .update({ bannerUrl: bannerPath });
 
-        console.log(`Updated profile banner for user ${username} to: ${imageUrl}`);
+        console.log(`Updated profile banner for user ${username} to path: ${bannerPath}`);
 
         if (!uploadDone) {
           uploadDone = true;
           return res.status(200).json({
             success: true,
             message: 'Profile banner uploaded successfully',
+            path: bannerPath,
             url: imageUrl
           });
         }
@@ -4700,7 +5115,7 @@ server.get(PROXY + '/api/subscription/verify-session', async (req, res) => {
       );
 
       // Update the user's account type to reflect the new plan
-      await knex('userData').where({ id: userId }).update({ accountType: planId });
+      await knex('userData').where({ id: userId }).update({ accountPlan: planId });
 
       console.log(`✅ Subscription activated for user ${userId}: plan=${planId}`);
 
@@ -6605,7 +7020,7 @@ async function stripeBuySubscription(data) {
           .where('id', userId)
           .update({
             credits: knex.raw('credits + ?', [bonusCredits]),
-            accountType: planType
+            accountPlan: planType
           });
 
         // Get updated balance
@@ -6668,7 +7083,6 @@ const r2 = new S3Client({
   requestChecksumCalculation: 'WHEN_REQUIRED',
 });
 const R2_BUCKET = process.env.R2_BUCKET;          // e.g. prolifer8-app
-const R2_PUBLIC_BASE = process.env.R2_PUBLIC_BASE; // your public/CDN base for thumbnails
 
 
 const RAW_R2_ENDPOINT = process.env.R2_ENDPOINT || process.env.R2_S3_ENDPOINT || '';
@@ -6702,7 +7116,13 @@ const storage = R2_ENDPOINT && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY
 
 const BUCKET_NAME = process.env.R2_BUCKET || endpointBucketFromPath || process.env.GCS_BUCKET || 'prolifer8-app';
 const DEST_PREFIX = process.env.STORAGE_PREFIX || process.env.GCS_PREFIX || 'storage_folder'; // "folder" inside bucket
-const PUBLIC_STORAGE_BASE_URL = (process.env.R2_PUBLIC_BASE_URL || '').replace(/\/$/, '');
+// Supports multiple env names so switching to a custom domain is config-only.
+const PUBLIC_STORAGE_BASE_URL = String(
+  process.env.STORAGE_PUBLIC_BASE_URL ||
+  process.env.R2_PUBLIC_BASE_URL ||
+  process.env.R2_PUBLIC_BASE ||
+  ''
+).trim().replace(/\/$/, '');
 
 if (!storage) {
   console.warn('⚠️  Cloud storage disabled: set R2_ENDPOINT, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY');
@@ -6718,6 +7138,41 @@ function publicUrl(bucket, filepath) {
     return `${R2_ENDPOINT.replace(/\/$/, '')}/${bucket}/${encodeURI(objectPath)}`;
   }
   return `/${bucket}/${encodeURI(objectPath)}`;
+}
+
+function normalizeStoredAssetReference(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+
+  // Keep existing path-based references as-is.
+  if (!/^https?:\/\//i.test(raw)) {
+    return raw.replace(/^\/+/, '');
+  }
+
+  const normalizedR2Endpoint = String(R2_ENDPOINT || '').replace(/\/$/, '');
+  const normalizedPublicBase = String(PUBLIC_STORAGE_BASE_URL || '').replace(/\/$/, '');
+  const normalizedBucket = String(BUCKET_NAME || '').trim();
+
+  // R2 URL format: <endpoint>/<bucket>/<objectPath>
+  if (normalizedR2Endpoint && raw.startsWith(`${normalizedR2Endpoint}/`)) {
+    const afterEndpoint = raw.slice(normalizedR2Endpoint.length + 1);
+    const slash = afterEndpoint.indexOf('/');
+    if (slash > -1) {
+      const bucket = afterEndpoint.slice(0, slash);
+      const objectPath = afterEndpoint.slice(slash + 1);
+      if (!normalizedBucket || bucket === normalizedBucket) {
+        return decodeURIComponent(objectPath).replace(/^\/+/, '');
+      }
+    }
+  }
+
+  // CDN/public base URL format: <publicBase>/<objectPath>
+  if (normalizedPublicBase && raw.startsWith(`${normalizedPublicBase}/`)) {
+    return decodeURIComponent(raw.slice(normalizedPublicBase.length + 1)).replace(/^\/+/, '');
+  }
+
+  // Not a known storage URL: keep full URL untouched.
+  return raw;
 }
 
 // Allowed file types (both ext and mime)

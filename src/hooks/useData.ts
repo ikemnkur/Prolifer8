@@ -156,7 +156,7 @@ interface DashboardData {
 }
 
 interface DashboardResponse {
-  user: { id: string; username: string; email: string; credits: number; profilePicture: string; accountType: string };
+  user: { id: string; username: string; email: string; credits: number; profilePicture: string; accountPlan: string };
   myPosts?: ServerPost[];
   myDrops?: ServerPost[];
   contributed?: ServerPost[];
@@ -231,9 +231,9 @@ export function useDashboard() {
 
 export interface HistoryEntry {
   id: string;
-  dropId: string;
-  dropTitle: string;
-  dropStatus: string;
+  postId: string;
+  postTitle: string;
+  postStatus: string;
   amount: number;
   penaltyAmount: number;
   isRefunded: boolean;
@@ -243,18 +243,30 @@ export interface HistoryEntry {
 }
 
 interface HistoryResponse {
-  history: {
+  history?: {
     id: string;
-    dropId: string;
+    postId: string;
     amount: number;
     penaltyAmount: number;
     isRefunded: number;
     created_at: string;
-    dropTitle: string;
-    dropStatus: string;
+    postTitle: string;
+    postStatus: string;
   }[];
-  total: number;
-  totalSpent: number;
+  contributions?: {
+    id: string;
+    postId?: string;
+    relatedPostId?: string;
+    amount: number;
+    penaltyAmount?: number;
+    isRefunded?: number;
+    created_at: string;
+    postTitle: string;
+    postStatus?: string;
+  }[];
+  total?: number;
+  totalSpent?: number;
+  totalContributed?: number;
 }
 
 export function useContributionHistory() {
@@ -271,20 +283,22 @@ export function useContributionHistory() {
     (async () => {
       setLoading(true);
       try {
-        const res = await api.get<HistoryResponse>('/api/contributions/history');
+        const res = await api.get<HistoryResponse>('/api/history/contributions');
         if (cancelled) return;
-        setEntries(res.history.map(h => ({
+        const history = res.history ?? res.contributions ?? [];
+        setEntries(history.map(h => ({
           id: h.id,
-          dropId: h.dropId,
-          dropTitle: h.dropTitle,
-          dropStatus: h.dropStatus,
-          amount: h.amount,
-          penaltyAmount: h.penaltyAmount,
+          postId: h.postId ?? ('relatedPostId' in h ? h.relatedPostId : undefined) ?? '',
+          postTitle: h.postTitle,
+          postStatus: h.postStatus ?? 'completed',
+          amount: Math.abs(Number(h.amount ?? 0)),
+          penaltyAmount: Number(h.penaltyAmount ?? 0),
           isRefunded: !!h.isRefunded,
           timestamp: new Date(h.created_at).getTime(),
           kind: 'contribution' as const,
         })));
-        setTotalSpent(res.totalSpent);
+        const derivedTotal = history.reduce((sum, item) => sum + Math.abs(Number(item.amount ?? 0)), 0);
+        setTotalSpent(Number(res.totalSpent ?? res.totalContributed ?? derivedTotal));
       } catch {
         if (!cancelled) setError('Failed to load history');
       } finally {
@@ -295,7 +309,7 @@ export function useContributionHistory() {
     return () => { cancelled = true; };
   }, [isAuthenticated]);
 
-  return { entries, totalSpent, loading, error };
+  return { entries, totalSpent, totalContributed: totalSpent, loading, error };
 }
 
 // ── Stall action history hook ──────────────────────────────
@@ -303,13 +317,13 @@ export function useContributionHistory() {
 interface StallHistoryResponse {
   history: {
     id: string;
-    dropId: string;
+    postId: string;
     stallMinutes: number;
     creditCost: number;
     balanceAfter: number;
     created_at: string;
-    dropTitle: string;
-    dropStatus: string;
+    postTitle: string;
+    postStatus: string;
   }[];
   total: number;
 }
@@ -329,9 +343,9 @@ export function useStallHistory() {
         if (cancelled) return;
         setEntries(res.history.map(h => ({
           id: h.id,
-          dropId: h.dropId,
-          dropTitle: h.dropTitle,
-          dropStatus: h.dropStatus,
+          postId: h.postId,
+          postTitle: h.postTitle,
+          postStatus: h.postStatus,
           amount: h.creditCost,
           penaltyAmount: 0,
           isRefunded: false,
@@ -414,8 +428,8 @@ export function usePurchaseHistory() {
 
 export interface DownloadEntry {
   id: string;
-  dropId: string;
-  dropTitle: string;
+  postId: string;
+  postTitle: string;
   pricePaid: number;
   basePrice: number;
   contributorDiscount: number;
@@ -428,8 +442,8 @@ export interface DownloadEntry {
 interface DownloadsResponse {
   downloads: {
     id: string;
-    dropId: string;
-    dropTitle: string;
+    postId: string;
+    postTitle: string;
     pricePaid: number;
     basePrice: number;
     contributorDiscount: number;
@@ -456,8 +470,8 @@ export function useDownloadHistory() {
         if (cancelled) return;
         setEntries(res.downloads.map(d => ({
           id: d.id,
-          dropId: d.dropId,
-          dropTitle: d.dropTitle,
+          postId: d.postId,
+          postTitle: d.postTitle,
           pricePaid: d.pricePaid,
           basePrice: d.basePrice,
           contributorDiscount: d.contributorDiscount,
@@ -541,8 +555,8 @@ export function useMembershipHistory() {
 
 export interface EarningsEntry {
   id: string;
-  dropId: string | null;
-  dropTitle: string | null;
+  postId: string | null;
+  postTitle: string | null;
   amount: number;
   balanceAfter: number;
   description: string | null;
@@ -552,8 +566,8 @@ export interface EarningsEntry {
 interface EarningsResponse {
   earnings: {
     id: string;
-    relatedDropId: string | null;
-    dropTitle: string | null;
+    relatedpostId: string | null;
+    postTitle: string | null;
     amount: number;
     balanceAfter: number;
     description: string | null;
@@ -598,8 +612,8 @@ export function useEarningsHistory() {
         if (cancelled) return;
         setEntries(res.earnings.map(e => ({
           id: e.id,
-          dropId: e.relatedDropId,
-          dropTitle: e.dropTitle || 'Unknown Drop',
+          postId: e.relatedpostId,
+          postTitle: e.postTitle || 'Unknown Drop',
           amount: e.amount,
           balanceAfter: e.balanceAfter,
           description: e.description,

@@ -43,7 +43,7 @@ export default function SubscriptionCallback() {
         if (cancelled) return;
         if (res.success) {
           setPlanName(res.session?.subscription?.planName ?? 'Subscription');
-          // Refresh auth so user.accountType updates everywhere
+          // Refresh auth so user.accountPlan updates everywhere
           await refreshUser();
           setStatus('success');
           // Auto-redirect after 3s

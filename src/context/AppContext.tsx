@@ -7,7 +7,7 @@ import { mapDrop, type ServerPost } from '../hooks/useData';
 interface AppState {
   drops: Drop[];
   dropsLoading: boolean;
-  contribute: (dropId: string, amount: number) => void;
+  contribute: (postId: string, amount: number) => void;
   refreshDrops: () => void;
 }
 
@@ -34,10 +34,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     fetchDrops();
   }, [fetchDrops]);
 
-  const contribute = useCallback((dropId: string, amount: number) => {
+  const contribute = useCallback((postId: string, amount: number) => {
     setDrops((prev) =>
       prev.map((d) => {
-        if (d.id !== dropId) return d;
+        if (d.id !== postId) return d;
         const newContributions = d.currentContributions + amount;
         const goalMet = newContributions >= d.goalAmount;
         const newBurnRate = goalMet

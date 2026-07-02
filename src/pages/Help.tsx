@@ -175,6 +175,7 @@ export default function Help() {
               value={supportProblemType}
               onChange={(e) => setSupportProblemType(e.target.value)}
               className="mt-1 w-full rounded-lg border border-surface-3 bg-background px-3 py-2 text-sm text-text"
+              style={{ backgroundColor: 'rgba(55, 67, 86, 0.94)' }}
               required
             >
               <option value="">Select Feedback Type</option>

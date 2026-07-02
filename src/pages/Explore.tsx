@@ -5,6 +5,8 @@ import { useApp } from '../context/AppContext';
 import { api } from '../lib/api';
 import { censorTitle, isMatureContent } from '../lib/contentSafety';
 import { getTopTags, loadTagProfile, scoreByTagAffinity, trackTags } from '../lib/tagProfile';
+import ExploreSponsoredAdCard from '../components/ExploreSponsoredAdCard';
+import PromotionModal from '../components/PromotionModal';
 import type { Drop } from '../types';
 
 type SearchTab = 'posts' | 'profiles';
@@ -16,6 +18,75 @@ type CreatorPreview = {
   postCount: number;
   tags: string[];
 };
+
+interface SponsoredPromo {
+  id: string;
+  username: string | null;
+  submissionType: 'ad' | 'post_sponsorship';
+  title: string;
+  description: string | null;
+  targetPostId: string;
+  target_url: string | null;
+  ctaText: string | null;
+  mediaUrl: string | null;
+  assetPath: string | null;
+  thumbnailPath?: string | null;
+  thumbnailImg?: string | null;
+  mediaType: string | null;
+}
+
+interface SponsoredResponse {
+  sponsored: SponsoredPromo[];
+}
+
+type SponsoredMediaKind = 'image' | 'video' | 'audio';
+
+type ExploreFeedItem =
+  | { kind: 'post'; id: string; post: Drop; index: number }
+  | { kind: 'ad'; id: string };
+
+function detectSponsoredMediaKind(assetPath: string | null, mediaUrl: string | null, mediaType: string | null | undefined): SponsoredMediaKind {
+  if (mediaType) {
+    if (/^video/i.test(mediaType)) return 'video';
+    if (/^audio/i.test(mediaType)) return 'audio';
+    if (/^image/i.test(mediaType)) return 'image';
+  }
+  const url = (assetPath || mediaUrl || '').toLowerCase().split('?')[0];
+  if (!url) return 'image';
+  if (/youtube\.com|youtu\.be|vimeo\.com/.test(url)) return 'video';
+  if (/\.(mp4|webm|mov|avi|mkv)$/.test(url)) return 'video';
+  if (/\.(mp3|wav|ogg|aac|flac|m4a)$/.test(url)) return 'audio';
+  return 'image';
+}
+
+function toEmbedUrl(url: string): string | null {
+  const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&?/]+)/);
+  if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}`;
+
+  const vimeoMatch = url.match(/vimeo\.com\/(\d+)/);
+  if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[1]}`;
+
+  return null;
+}
+
+function resolveAdAssetUrl(pathOrUrl: string | null, fallbackUrl: string | null): string {
+  const apiBase = import.meta.env.VITE_API_URL || '';
+  const raw = (pathOrUrl || fallbackUrl || '').trim();
+  if (!raw) return 'https://picsum.photos/seed/explore-ad-slot/800/1000';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw.startsWith('/')) return `${apiBase}${raw}`;
+  return `${apiBase}/${raw}`;
+}
+
+function resolveAdTarget(ad: SponsoredPromo): string {
+  if (ad.submissionType === 'ad' && ad.target_url) return ad.target_url;
+  const t = String(ad.targetPostId || '').trim();
+  if (!t) return '/explore';
+  if (/^https?:\/\//i.test(t)) return t;
+  if (t.startsWith('/')) return t;
+  if (t.includes('/post/')) return t;
+  return `/post/${t}`;
+}
 
 function getClipLabel(post: Drop, index: number): string {
   const tags = post.tags.map((tag) => tag.toLowerCase());
@@ -154,6 +225,9 @@ export default function Explore() {
   const [search, setSearch] = useState('');
   const [isSearchPanelCollapsed, setIsSearchPanelCollapsed] = useState(false);
   const [searchTab, setSearchTab] = useState<SearchTab>('posts');
+  const [sponsoredAds, setSponsoredAds] = useState<SponsoredPromo[]>([]);
+  const [activeSponsoredAdId, setActiveSponsoredAdId] = useState<string | null>(null);
+  const [adDetailsModalOpen, setAdDetailsModalOpen] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -225,6 +299,25 @@ export default function Explore() {
     return slice;
   }, [visiblePosts]);
 
+  const activeSponsoredAd = useMemo(
+    () => sponsoredAds.find((ad) => ad.id === activeSponsoredAdId) || null,
+    [sponsoredAds, activeSponsoredAdId]
+  );
+
+  const postItems = useMemo<ExploreFeedItem[]>(() => {
+    const items: ExploreFeedItem[] = displayPosts.map((post, index) => ({
+      kind: 'post',
+      id: post.id,
+      post,
+      index,
+    }));
+
+    if (!activeSponsoredAd) return items;
+    const insertAt = Math.min(5, items.length);
+    items.splice(insertAt, 0, { kind: 'ad', id: `explore-ad-${activeSponsoredAd.id}` });
+    return items;
+  }, [displayPosts, activeSponsoredAd]);
+
   const visibleProfiles = useMemo(() => {
     const q = search.trim().toLowerCase();
     const creatorsMap = new Map<string, CreatorPreview>();
@@ -274,6 +367,61 @@ export default function Explore() {
       });
     } catch {
       // Non-blocking analytics signal.
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    api.get<SponsoredResponse>('/api/promotions/sponsored?limit=10')
+      .then((res) => {
+        if (cancelled) return;
+        const ads = Array.isArray(res?.sponsored) ? res.sponsored.filter((a) => a.submissionType === 'ad') : [];
+        setSponsoredAds(ads);
+        setActiveSponsoredAdId((prev) => {
+          if (prev && ads.some((a) => a.id === prev)) return prev;
+          return ads[0]?.id ?? null;
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSponsoredAds([]);
+        setActiveSponsoredAdId(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (sponsoredAds.length <= 1 || adDetailsModalOpen) return;
+    const timer = window.setInterval(() => {
+      setActiveSponsoredAdId((prev) => {
+        const idx = sponsoredAds.findIndex((ad) => ad.id === prev);
+        if (idx < 0) return sponsoredAds[0]?.id ?? null;
+        return sponsoredAds[(idx + 1) % sponsoredAds.length]?.id ?? null;
+      });
+    }, 12000);
+
+    return () => window.clearInterval(timer);
+  }, [sponsoredAds, adDetailsModalOpen]);
+
+  const openAdDetailsModal = () => {
+    if (!activeSponsoredAd) return;
+    void api.post(`/api/promotions/${activeSponsoredAd.id}/impression`, {}).catch(() => {});
+    setAdDetailsModalOpen(true);
+  };
+
+  const openAdTarget = () => {
+    if (!activeSponsoredAd) return;
+    void api.post(`/api/promotions/${activeSponsoredAd.id}/click`, {}).catch(() => {});
+    const target = resolveAdTarget(activeSponsoredAd);
+    setAdDetailsModalOpen(false);
+    if (/^https?:\/\//i.test(target)) {
+      window.open(target, '_blank', 'noopener,noreferrer');
+    } else {
+      window.location.assign(target);
     }
   };
 
@@ -360,9 +508,25 @@ export default function Explore() {
         </div>
       ) : searchTab === 'posts' ? (
         <section className="grid grid-cols-3 gap-2 md:gap-3 lg:gap-4">
-          {displayPosts.map((post, index) => (
-            <TileCard key={post.id} post={post} clipLabel={getClipLabel(post, index)} onOpen={handleOpenPost} />
-          ))}
+          {postItems.map((item) =>
+            item.kind === 'ad' ? (
+              <ExploreSponsoredAdCard
+                key={item.id}
+                ad={activeSponsoredAd}
+                onOpen={openAdDetailsModal}
+                detectMediaKind={detectSponsoredMediaKind}
+                resolveAssetUrl={resolveAdAssetUrl}
+                toEmbedUrl={toEmbedUrl}
+              />
+            ) : (
+              <TileCard
+                key={item.id}
+                post={item.post}
+                clipLabel={getClipLabel(item.post, item.index)}
+                onOpen={handleOpenPost}
+              />
+            )
+          )}
         </section>
       ) : displayProfiles.length === 0 ? (
         <div className="rounded-2xl border border-surface-3 bg-surface-2 p-8 text-center text-sm text-text-muted">
@@ -375,6 +539,19 @@ export default function Explore() {
           ))}
         </section>
       )}
+
+      <PromotionModal
+        open={adDetailsModalOpen}
+        ad={activeSponsoredAd}
+        countdown={0}
+        variant={activeSponsoredAd?.submissionType === 'post_sponsorship' ? 'post_sponsorship' : 'ad'}
+        onClose={() => setAdDetailsModalOpen(false)}
+        onPrimaryAction={openAdTarget}
+        resolveAssetUrl={resolveAdAssetUrl}
+        detectMediaKind={detectSponsoredMediaKind}
+        toEmbedUrl={toEmbedUrl}
+        primaryLabel={activeSponsoredAd?.ctaText || 'Visit Site'}
+      />
     </div>
   );
 }

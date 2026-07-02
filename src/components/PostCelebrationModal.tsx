@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Download, Flame } from 'lucide-react';
 
 interface Props {
-  dropId: string;
-  dropTitle: string;
+  postId: string;
+  postTitle: string;
 }
 
 // Deterministic particles so no re-render jitter
@@ -17,7 +17,7 @@ const PARTICLES = Array.from({ length: 20 }, (_, i) => ({
   size: i % 3 === 0 ? 'text-2xl' : i % 3 === 1 ? 'text-xl' : 'text-lg',
 }));
 
-export default function DropCelebrationModal({ dropId, dropTitle }: Props) {
+export default function DropCelebrationModal({ postId, postTitle }: Props) {
   const navigate = useNavigate();
   const [visible, setVisible] = useState(false);
 
@@ -28,7 +28,7 @@ export default function DropCelebrationModal({ dropId, dropTitle }: Props) {
   }, []);
 
   function handleDownload() {
-    navigate(`/post/${dropId}`);
+    navigate(`/post/${postId}`);
   }
 
   return (
@@ -93,7 +93,7 @@ export default function DropCelebrationModal({ dropId, dropTitle }: Props) {
           {/* Drop name */}
           <div className="bg-[#2a2a3e] border border-[#35354d] rounded-xl px-4 py-3">
             <p className="text-xs text-[#94a3b8] mb-0.5">Now available</p>
-            <p className="text-white font-bold text-base leading-snug line-clamp-2">"{dropTitle}"</p>
+            <p className="text-white font-bold text-base leading-snug line-clamp-2">"{postTitle}"</p>
           </div>
 
           <p className="text-sm text-[#94a3b8]">

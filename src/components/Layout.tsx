@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
+import PromotionModal from './PromotionModal';
 
 interface Notif {
   id: string;
@@ -38,6 +39,8 @@ interface SponsoredPromo {
   ctaText: string | null;
   mediaUrl: string | null;
   assetPath: string | null;
+  thumbnailPath?: string | null;
+  thumbnailImg?: string | null;
   mediaType: string | null;
 }
 
@@ -183,7 +186,7 @@ export default function Layout() {
     const blocked = Math.random() > freq;
 
     // Subscribed users (Standard / Premium) are ad-free
-    const isSubscribed = ['standard', 'premium'].includes((user?.accountType ?? '').toLowerCase());
+    const isSubscribed = ['standard', 'premium'].includes((user?.accountPlan ?? '').toLowerCase());
 
     if (!shouldShowOnRoute || sponsoredAds.length === 0 || blocked || isSubscribed) {
       setShowAdModal(false);
@@ -297,236 +300,32 @@ export default function Layout() {
         {isLayoutHeaderCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
       </button>
 
-      {showAdModal && activeAd && activeAd.submissionType === 'ad' && (
-        /* ── Advertisement modal ── */
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <button
-            className="absolute inset-0 bg-black/65"
-            onClick={() => adCloseCountdown === 0 && setShowAdModal(false)}
-            aria-label="Close advertisement"
-          />
-          <div className="relative w-full max-w-xl bg-surface border border-surface-3 rounded-2xl overflow-hidden shadow-2xl">
-            {/* Close button */}
-            <button
-              onClick={() => adCloseCountdown === 0 && setShowAdModal(false)}
-              disabled={adCloseCountdown > 0}
-              className={`absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full text-white transition z-10 ${
-                adCloseCountdown > 0
-                  ? 'bg-black/40 cursor-not-allowed'
-                  : 'bg-black/50 hover:bg-black/70 cursor-pointer'
-              }`}
-              aria-label={adCloseCountdown > 0 ? `Close in ${adCloseCountdown}s` : 'Close'}
-            >
-              {adCloseCountdown > 0 ? (
-                <span className="text-xs font-bold">{adCloseCountdown}</span>
-              ) : (
-                <X className="w-4 h-4" />
-              )}
-            </button>
-            {/* Media banner — image, video, or audio depending on asset type */}
-            {(() => {
-              const resolvedUrl = resolveAssetUrl(activeAd.assetPath, activeAd.mediaUrl);
-              const kind = detectMediaKind(activeAd.assetPath, activeAd.mediaUrl, activeAd.mediaType);
-
-              if (kind === 'video') {
-                const embedSrc = toEmbedUrl(resolvedUrl);
-                return (
-                  <div className="aspect-[16/7] bg-black overflow-hidden">
-                    {embedSrc ? (
-                      <iframe
-                        src={embedSrc}
-                        className="w-full h-full"
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                        allowFullScreen
-                        title={activeAd.title}
-                      />
-                    ) : (
-                      <video
-                        src={resolvedUrl}
-                        className="w-full h-full object-cover"
-                        controls
-                        preload="metadata"
-                      />
-                    )}
-                  </div>
-                );
-              }
-
-              if (kind === 'audio') {
-                return (
-                  <div className="bg-surface-2 px-5 py-8 flex flex-col items-center gap-4">
-                    <div className="w-14 h-14 rounded-full bg-brand/15 flex items-center justify-center">
-                      <Music className="w-7 h-7 text-brand" />
-                    </div>
-                    <p className="text-sm font-semibold text-text text-center line-clamp-1">{activeAd.title}</p>
-                    <audio
-                      src={resolvedUrl}
-                      controls
-                      preload="metadata"
-                      className="w-full max-w-xs"
-                    />
-                  </div>
-                );
-              }
-
-              // Default: image (clickable → opens advertiser URL in new tab)
-              return (
-                <button
-                  onClick={openAdInNewTab}
-                  className="block w-full aspect-[16/7] bg-surface-2 overflow-hidden cursor-pointer group"
-                  aria-label={`Visit ${activeAd.title}`}
-                >
-                  <img
-                    src={resolvedUrl}
-                    alt={activeAd.title}
-                    className="w-full h-full object-cover group-hover:opacity-90 transition-opacity"
-                  />
-                </button>
-              );
-            })()}
-            <div className="p-5">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-[10px] uppercase tracking-wider font-bold text-text-muted/60 border border-surface-3 rounded px-1.5 py-0.5">
-                  Ad
-                </span>
-                <p className="text-[10px] text-text-muted/50 truncate">{activeAd.username || 'Advertiser'}</p>
-              </div>
-              <h3 className="text-lg font-bold text-text">{activeAd.title}</h3>
-              <p className="text-xs text-text-muted mt-1 line-clamp-2">{activeAd.description || ''}</p>
-              <div className="mt-3 flex items-center gap-2">
-                <button
-                  onClick={() => reactToAd('like')}
-                  className="px-2.5 py-1 text-xs rounded-lg bg-surface-2 text-text-muted hover:text-text"
-                >
-                  Like
-                </button>
-                <button
-                  onClick={() => reactToAd('neutral')}
-                  className="px-2.5 py-1 text-xs rounded-lg bg-surface-2 text-text-muted hover:text-text"
-                >
-                  Neutral
-                </button>
-                <button
-                  onClick={() => reactToAd('dislike')}
-                  className="px-2.5 py-1 text-xs rounded-lg bg-surface-2 text-text-muted hover:text-text"
-                >
-                  Dislike
-                </button>
-              </div>
-              <div className="mt-4 flex gap-2">
-                <button
-                  onClick={openAdInNewTab}
-                  className="px-4 py-2 text-sm font-semibold rounded-lg bg-brand text-white hover:bg-brand-dark transition"
-                >
-                  {activeAd.ctaText || 'Visit Site'}
-                </button>
-                <button
-                  onClick={() => adCloseCountdown === 0 && setShowAdModal(false)}
-                  disabled={adCloseCountdown > 0}
-                  className={`px-4 py-2 text-sm font-semibold rounded-lg transition ${
-                    adCloseCountdown > 0
-                      ? 'bg-surface-2 text-text-muted/50 cursor-not-allowed'
-                      : 'bg-surface-2 text-text-muted hover:text-text cursor-pointer'
-                  }`}
-                >
-                  {adCloseCountdown > 0 ? `Close (${adCloseCountdown}s)` : 'Close'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showAdModal && activeAd && activeAd.submissionType === 'post_sponsorship' && (
-        /* ── Sponsored post modal ── */
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          {/* Backdrop — only dismissible after countdown */}
-          <button
-            className="absolute inset-0 bg-black/65"
-            onClick={() => adCloseCountdown === 0 && setShowAdModal(false)}
-            aria-label="Close ad"
-          />
-          <div className="relative w-full max-w-xl bg-surface border border-surface-3 rounded-2xl overflow-hidden shadow-2xl">
-            {/* Close button — shows countdown then becomes active */}
-            <button
-              onClick={() => adCloseCountdown === 0 && setShowAdModal(false)}
-              disabled={adCloseCountdown > 0}
-              className={`absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full text-white transition ${
-                adCloseCountdown > 0
-                  ? 'bg-black/40 cursor-not-allowed'
-                  : 'bg-black/50 hover:bg-black/70 cursor-pointer'
-              }`}
-              aria-label={adCloseCountdown > 0 ? `Close in ${adCloseCountdown}s` : 'Close'}
-            >
-              {adCloseCountdown > 0 ? (
-                <span className="text-xs font-bold">{adCloseCountdown}</span>
-              ) : (
-                <X className="w-4 h-4" />
-              )}
-            </button>
-            <div className="aspect-[16/7] bg-surface-2 overflow-hidden">
-              <img
-                src={resolveAssetUrl(activeAd.assetPath, activeAd.mediaUrl)}
-                alt={activeAd.title}
-                className="w-full h-full object-cover"
-              />
-            </div>
-            <div className="p-5">
-              <p className="text-[10px] uppercase tracking-wider font-bold text-brand/80">Sponsored</p>
-              <h3 className="text-lg font-bold text-text mt-1">{activeAd.title}</h3>
-              <p className="text-xs text-text-muted mt-1 line-clamp-3">{activeAd.description || 'Sponsored content'}</p>
-              <p className="text-[11px] text-text-muted mt-2">By {activeAd.username || 'Sponsor'}</p>
-              <div className="mt-3 flex items-center gap-2">
-                <button
-                  onClick={() => reactToAd('like')}
-                  className="px-2.5 py-1 text-xs rounded-lg bg-surface-2 text-text-muted hover:text-text"
-                >
-                  Like
-                </button>
-                <button
-                  onClick={() => reactToAd('neutral')}
-                  className="px-2.5 py-1 text-xs rounded-lg bg-surface-2 text-text-muted hover:text-text"
-                >
-                  Neutral
-                </button>
-                <button
-                  onClick={() => reactToAd('dislike')}
-                  className="px-2.5 py-1 text-xs rounded-lg bg-surface-2 text-text-muted hover:text-text"
-                >
-                  Dislike
-                </button>
-              </div>
-              <div className="mt-4 flex gap-2">
-                <button
-                  onClick={openSponsoredTarget}
-                  className="px-4 py-2 text-sm font-semibold rounded-lg bg-brand text-white hover:bg-brand-dark transition"
-                >
-                  {activeAd.ctaText || 'Learn more'}
-                </button>
-                <button
-                  onClick={() => adCloseCountdown === 0 && setShowAdModal(false)}
-                  disabled={adCloseCountdown > 0}
-                  className={`px-4 py-2 text-sm font-semibold rounded-lg transition ${
-                    adCloseCountdown > 0
-                      ? 'bg-surface-2 text-text-muted/50 cursor-not-allowed'
-                      : 'bg-surface-2 text-text-muted hover:text-text cursor-pointer'
-                  }`}
-                >
-                  {adCloseCountdown > 0 ? `Close (${adCloseCountdown}s)` : 'Close'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <PromotionModal
+        open={showAdModal && !!activeAd}
+        ad={activeAd}
+        countdown={adCloseCountdown}
+        variant={activeAd?.submissionType === 'post_sponsorship' ? 'post_sponsorship' : 'ad'}
+        onClose={() => adCloseCountdown === 0 && setShowAdModal(false)}
+        onPrimaryAction={activeAd?.submissionType === 'ad' ? openAdInNewTab : openSponsoredTarget}
+        onReact={reactToAd}
+        resolveAssetUrl={resolveAssetUrl}
+        detectMediaKind={detectMediaKind}
+        toEmbedUrl={toEmbedUrl}
+        primaryLabel={activeAd?.submissionType === 'ad' ? 'Visit Site' : 'Learn more'}
+      />
 
       {/* Top navbar */}
       <div className={`overflow-hidden transition-[max-height,opacity] duration-300 ${isLayoutHeaderCollapsed ? 'max-h-0 opacity-0' : 'max-h-44 opacity-100'}`}>
         <header className="bg-surface border-b border-surface-3 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto flex items-center justify-between px-4 h-14">
           <Link to="/explore" className="flex items-center gap-2 text-brand font-bold text-xl tracking-tight no-underline">
-            Prolifer<span className="text-white">8</span>
-          </Link>
+          Prolifer
+          <div style={{ padding: '0 5px', backgroundColor: '#d377f7', borderRadius: '0.5rem' }} className="flex items-center gap-4">
+ 
+            <span className="text-white">8</span>
+        
+          </div>
+           </Link>
 
           <nav className="hidden md:flex items-center gap-1">
             {NAV.map(({ to, label, icon: Icon }) => (

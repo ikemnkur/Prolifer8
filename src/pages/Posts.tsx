@@ -10,6 +10,7 @@ import { loadTagProfile, scoreByTagAffinity } from '../lib/tagProfile';
 import type { Drop, Review } from '../types';
 import ReviewForm from '../components/ReviewForm';
 import ShareModal from '../components/ShareModal';
+import PromotionModal from '../components/PromotionModal';
 import { Check, ChevronDown, ChevronUp, Copy, Eye, ExternalLink, Flag, MessageCircle, PlusCircle, Send, Share2, Star, DollarSignIcon, ThumbsDown, ThumbsUp, X } from 'lucide-react';
 
 type FilePayload = {
@@ -59,6 +60,50 @@ type MoreRailItem =
   | { kind: 'ad'; id: string }
   | { kind: Exclude<MoreItemKind, 'ad'>; id: string; post: Drop };
 type PostFlagReason = 'spam' | 'scam' | 'explicit' | 'abuse' | 'plagiarism' | 'impersonation';
+
+interface SponsoredPromo {
+  id: string;
+  username: string | null;
+  submissionType: 'ad' | 'post_sponsorship';
+  title: string;
+  description: string | null;
+  targetPostId: string;
+  target_url: string | null;
+  ctaText: string | null;
+  mediaUrl: string | null;
+  assetPath: string | null;
+  thumbnailPath?: string | null;
+  thumbnailImg?: string | null;
+  mediaType: string | null;
+}
+
+interface SponsoredResponse {
+  sponsored: SponsoredPromo[];
+}
+
+type SponsoredMediaKind = 'image' | 'video' | 'audio';
+
+function detectSponsoredMediaKind(assetPath: string | null, mediaUrl: string | null, mediaType: string | null | undefined): SponsoredMediaKind {
+  if (mediaType) {
+    if (/^video/i.test(mediaType)) return 'video';
+    if (/^audio/i.test(mediaType)) return 'audio';
+    if (/^image/i.test(mediaType)) return 'image';
+  }
+  const url = (assetPath || mediaUrl || '').toLowerCase().split('?')[0];
+  if (!url) return 'image';
+  if (/youtube\.com|youtu\.be|vimeo\.com/.test(url)) return 'video';
+  if (/\.(mp4|webm|mov|avi|mkv)$/.test(url)) return 'video';
+  if (/\.(mp3|wav|ogg|aac|flac|m4a)$/.test(url)) return 'audio';
+  return 'image';
+}
+
+function toPromoEmbedUrl(url: string): string | null {
+  const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&?/]+)/);
+  if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}`;
+  const vimeoMatch = url.match(/vimeo\.com\/(\d+)/);
+  if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[1]}`;
+  return null;
+}
 
 function getUserProfilePath(username?: string | null, userId?: string | null): string {
   const identifier = String(username || userId || '').trim();
@@ -506,6 +551,7 @@ export default function Posts() {
   const { drops } = useApp();
   const { isAuthenticated, user, updateBalance } = useAuth();
   const { isAlreadyWatched, markAsWatched } = useWatchedPosts();
+  const API_BASE = import.meta.env.VITE_API_URL || '';
 
   const localDrop = drops.find((d) => d.id === id);
   const [fetchedDrop, setFetchedDrop] = useState<Drop | null>(null);
@@ -548,9 +594,37 @@ export default function Posts() {
   const [commentsExpanded, setCommentsExpanded] = useState(true);
   const [commentModalOpen, setCommentModalOpen] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [sponsoredAds, setSponsoredAds] = useState<SponsoredPromo[]>([]);
+  const [activeSponsoredAdId, setActiveSponsoredAdId] = useState<string | null>(null);
+  const [adDetailsModalOpen, setAdDetailsModalOpen] = useState(false);
+  const [matureWarningOpen, setMatureWarningOpen] = useState(false);
+  const [matureAcknowledged, setMatureAcknowledged] = useState(false);
 
   const drop = localDrop ?? fetchedDrop;
   const isCreator = Boolean(user?.id && drop?.creatorId && user.id === drop.creatorId);
+  const isCurrentPostMature = isMatureContent(drop?.mature);
+  const activeSponsoredAd = useMemo(
+    () => sponsoredAds.find((a) => a.id === activeSponsoredAdId) || null,
+    [sponsoredAds, activeSponsoredAdId]
+  );
+
+  function resolveAdAssetUrl(pathOrUrl: string | null, fallbackUrl: string | null): string {
+    const raw = (pathOrUrl || fallbackUrl || '').trim();
+    if (!raw) return 'https://picsum.photos/seed/sponsored-slot/600/320';
+    if (/^https?:\/\//i.test(raw)) return raw;
+    if (raw.startsWith('/')) return `${API_BASE}${raw}`;
+    return `${API_BASE}/${raw}`;
+  }
+
+  function resolveAdTarget(ad: SponsoredPromo): string {
+    if (ad.submissionType === 'ad' && ad.target_url) return ad.target_url;
+    const t = String(ad.targetPostId || '').trim();
+    if (!t) return '/explore';
+    if (/^https?:\/\//i.test(t)) return t;
+    if (t.startsWith('/')) return t;
+    if (t.includes('/post/')) return t;
+    return `/post/${t}`;
+  }
 
   useEffect(() => {
     
@@ -677,6 +751,87 @@ export default function Posts() {
       cancelled = true;
     };
   }, [id, isAuthenticated, localDrop]);
+
+  useEffect(() => {
+    if (!drop?.id) return;
+    const sessionKey = `prolifer8_mature_ack_${drop.id}`;
+    const hasAck = sessionStorage.getItem(sessionKey) === '1';
+
+    if (!isMatureContent(drop.mature)) {
+      setMatureAcknowledged(true);
+      setMatureWarningOpen(false);
+      return;
+    }
+
+    setMatureAcknowledged(hasAck);
+    setMatureWarningOpen(!hasAck);
+  }, [drop?.id, drop?.mature]);
+
+  const acknowledgeMatureContent = () => {
+    if (!drop?.id) return;
+    const sessionKey = `prolifer8_mature_ack_${drop.id}`;
+    sessionStorage.setItem(sessionKey, '1');
+    setMatureAcknowledged(true);
+    setMatureWarningOpen(false);
+  };
+
+  const dismissMatureContent = () => {
+    setMatureWarningOpen(false);
+    navigate('/explore');
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get<SponsoredResponse>('/api/promotions/sponsored?limit=10')
+      .then((res) => {
+        if (cancelled) return;
+        const ads = Array.isArray(res?.sponsored) ? res.sponsored.filter((a) => a.submissionType === 'ad') : [];
+        setSponsoredAds(ads);
+        setActiveSponsoredAdId((prev) => {
+          if (prev && ads.some((a) => a.id === prev)) return prev;
+          return ads[0]?.id ?? null;
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSponsoredAds([]);
+          setActiveSponsoredAdId(null);
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (sponsoredAds.length <= 1 || adDetailsModalOpen) return;
+    const delay = 10_000 + Math.floor(Math.random() * 5_001);
+    const timer = window.setTimeout(() => {
+      setActiveSponsoredAdId((prev) => {
+        const idx = sponsoredAds.findIndex((a) => a.id === prev);
+        if (idx < 0) return sponsoredAds[0]?.id ?? null;
+        const nextIdx = (idx + 1) % sponsoredAds.length;
+        return sponsoredAds[nextIdx]?.id ?? null;
+      });
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [sponsoredAds, activeSponsoredAdId, adDetailsModalOpen]);
+
+  const openAdDetailsModal = () => {
+    if (!activeSponsoredAd) return;
+    void api.post(`/api/promotions/${activeSponsoredAd.id}/impression`, {}).catch(() => {});
+    setAdDetailsModalOpen(true);
+  };
+
+  const openAdTarget = () => {
+    if (!activeSponsoredAd) return;
+    void api.post(`/api/promotions/${activeSponsoredAd.id}/click`, {}).catch(() => {});
+    const target = resolveAdTarget(activeSponsoredAd);
+    setAdDetailsModalOpen(false);
+    if (/^https?:\/\//i.test(target)) {
+      window.open(target, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    navigate(target);
+  };
 
   const avgRating = useMemo(() => {
     if (!reviews.length) return 0;
@@ -1075,7 +1230,36 @@ export default function Posts() {
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-surface-3 bg-surface-2">
-        {resolvedFileUrl && mediaKind === 'video' ? (
+        {isCurrentPostMature && !matureAcknowledged ? (
+          <div className="relative">
+            {drop.thumbnailUrl ? (
+              <img
+                src={drop.thumbnailUrl}
+                alt={drop.title}
+                className="max-h-[560px] w-full object-cover blur-md saturate-50 brightness-75"
+              />
+            ) : (
+              <div className="flex h-[360px] items-center justify-center bg-black/60 text-sm text-text-muted">
+                Mature content preview hidden.
+              </div>
+            )}
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/45 px-6 text-center">
+              <span className="rounded-full border border-white/25 bg-black/45 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white">
+                Mature Content
+              </span>
+              <p className="max-w-md text-sm text-white/90">
+                This post is marked as mature. Confirm to view the full media.
+              </p>
+              <button
+                type="button"
+                onClick={() => setMatureWarningOpen(true)}
+                className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-dark"
+              >
+                View Mature Content
+              </button>
+            </div>
+          </div>
+        ) : resolvedFileUrl && mediaKind === 'video' ? (
           <video controls src={resolvedFileUrl} className="max-h-[560px] w-full bg-black" />
         ) : resolvedFileUrl && mediaKind === 'audio' ? (
           <AudioWaveformPlayer src={resolvedFileUrl} thumbnailUrl={drop.thumbnailUrl} title={drop.title} />
@@ -1329,18 +1513,47 @@ export default function Posts() {
                         : 'bg-slate-500/90';
 
               if (item.kind === 'ad') {
+                const adTitle = activeSponsoredAd?.title || '';
+                const shouldMarqueeTitle = adTitle.length > 30;
                 return (
-                  <div
+                  <button
+                    type="button"
+                    onClick={openAdDetailsModal}
                     key={item.id}
-                    className="relative min-w-[140px] overflow-hidden rounded-lg border border-dashed border-surface-3 bg-surface-2"
+                    className="relative min-w-[140px] overflow-hidden rounded-lg border border-dashed border-surface-3 bg-surface-2 text-left transition hover:border-brand/50"
                   >
                     <span className={`absolute right-1.5 top-1.5 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white ${chipClass}`}>
                       ad
                     </span>
-                    <div className="flex h-28 items-center justify-center px-3 text-center text-[11px] text-text-muted">
-                      Ad space
+                    <div className="h-20 w-full overflow-hidden bg-surface-3">
+                      {activeSponsoredAd ? (
+                        (() => {
+                          const thumbnailSrc = resolveAdAssetUrl(
+                            activeSponsoredAd.thumbnailPath || activeSponsoredAd.thumbnailImg || null,
+                            activeSponsoredAd.mediaUrl || activeSponsoredAd.assetPath
+                          );
+                          return <img src={thumbnailSrc} alt={activeSponsoredAd.title} className="h-full w-full object-cover" loading="lazy" />;
+                        })()
+                      ) : (
+                        <div className="flex h-full items-center justify-center px-3 text-center text-[11px] text-text-muted">Ad space</div>
+                      )}
                     </div>
-                  </div>
+                    <div className="border-t border-surface-3 px-2 py-1.5">
+                      <div className="relative overflow-hidden whitespace-nowrap text-[10px] font-semibold text-text">
+                        {activeSponsoredAd ? (
+                          shouldMarqueeTitle ? (
+                            <span className="inline-block min-w-full animate-[marquee_10s_linear_infinite] pr-4">
+                              {adTitle}
+                            </span>
+                          ) : (
+                            <span className="block truncate">{adTitle}</span>
+                          )
+                        ) : (
+                          <span className="text-text-muted">Sponsored ad</span>
+                        )}
+                      </div>
+                    </div>
+                  </button>
                 );
               }
 
@@ -1371,7 +1584,59 @@ export default function Posts() {
         )}
       </section>
 
-      {shareModalOpen && <ShareModal dropTitle={drop.title} dropUrl={dropUrl} onClose={() => setShareModalOpen(false)} />}
+      {shareModalOpen && <ShareModal postTitle={drop.title} dropUrl={dropUrl} onClose={() => setShareModalOpen(false)} />}
+
+      {matureWarningOpen && isCurrentPostMature && !matureAcknowledged && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-surface-3 bg-surface p-5">
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-text">Mature Content Warning</h3>
+              <button
+                type="button"
+                onClick={() => setMatureWarningOpen(false)}
+                className="text-text-muted transition hover:text-text"
+                aria-label="Close mature warning"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-sm leading-relaxed text-text-muted">
+              This post may contain mature material. Please confirm you want to continue.
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={dismissMatureContent}
+                className="rounded-lg border border-surface-3 px-3 py-2 text-sm text-text-muted transition hover:text-text"
+              >
+                Back to Explore
+              </button>
+              <button
+                type="button"
+                onClick={acknowledgeMatureContent}
+                className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-dark"
+              >
+                I Understand, Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <PromotionModal
+        open={adDetailsModalOpen}
+        ad={activeSponsoredAd}
+        countdown={0}
+        variant={activeSponsoredAd?.submissionType === 'post_sponsorship' ? 'post_sponsorship' : 'ad'}
+        onClose={() => setAdDetailsModalOpen(false)}
+        onPrimaryAction={openAdTarget}
+        resolveAssetUrl={resolveAdAssetUrl}
+        detectMediaKind={detectSponsoredMediaKind}
+        toEmbedUrl={toPromoEmbedUrl}
+        primaryLabel={activeSponsoredAd?.ctaText || 'Visit'}
+      />
+
+      <style>{`@keyframes marquee { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }`}</style>
 
       {reviewModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">

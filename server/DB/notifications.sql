@@ -21,7 +21,7 @@ CREATE TABLE
       'moderation',
       'system'
     ) NOT NULL DEFAULT 'system',
-    `relatedDropId` varchar(36) DEFAULT NULL,
+    `relatedpostId` varchar(36) DEFAULT NULL,
     `actionUrl` varchar(255) DEFAULT NULL,
     `isRead` tinyint(1) DEFAULT 0,
     `createdAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,

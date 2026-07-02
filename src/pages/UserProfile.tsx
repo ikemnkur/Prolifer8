@@ -13,8 +13,10 @@ interface ServerProfile {
   username: string;
   profilePicture: string | null;
   bio: string | null;
-  accountType: string;
+  accountPlan: string;
+  accountType?: string | null;
   totalDropsCreated: number;
+  totalPostsCreated?: number;
   totalCreditsEarned: number;
   creatorRating: number;
   createdAt: string;
@@ -79,11 +81,12 @@ function mapProfile(s: ServerProfile): CreatorProfile {
   return {
     id: s.id,
     username: s.username,
+    accountType: (s.accountType || s.accountPlan || 'personal').toLowerCase(),
     avatar: s.profilePicture || '',
     bio: s.bio || '',
     rating: s.creatorRating ?? 0,
     followerCount: s.followerCount ?? 0,
-    totalDrops: s.totalDropsCreated ?? 0,
+    totalDrops: s.totalDropsCreated ?? s.totalPostsCreated ?? 0,
     totalCreditsEarned: s.totalCreditsEarned ?? 0,
     joined: new Date(s.createdAt).getTime(),
     bannerUrl: s.bannerUrl || undefined,
@@ -188,6 +191,30 @@ export default function UserProfile() {
     profile.rating >= 80 ? 'text-green-500' : profile.rating >= 50 ? 'text-yellow-500' : 'text-red-500';
   const reportHref = `/help?report=1&targetId=${encodeURIComponent(profile.id)}&targetUsername=${encodeURIComponent(profile.username)}`;
   const bioVideoEmbedUrl = profile.bioVideoUrl ? normalizeBioVideoEmbedUrl(profile.bioVideoUrl) : '';
+  const accountType = String(profile.accountType || 'personal').toLowerCase();
+  const accountTypeUi: Record<string, { ring: string; badge: string; label: string }> = {
+    private: {
+      ring: 'ring-4 ring-violet-500/70 shadow-[0_0_0_6px_rgba(139,92,246,0.18)]',
+      badge: 'bg-violet-500/20 text-violet-200 border border-violet-400/50',
+      label: 'Private',
+    },
+    business: {
+      ring: 'ring-4 ring-sky-500/70 shadow-[0_0_0_6px_rgba(14,165,233,0.16)]',
+      badge: 'bg-sky-500/20 text-sky-200 border border-sky-400/50',
+      label: 'Business',
+    },
+    creator: {
+      ring: 'ring-4 ring-amber-400/70 shadow-[0_0_0_6px_rgba(251,191,36,0.16)]',
+      badge: 'bg-amber-500/20 text-amber-200 border border-amber-400/50',
+      label: 'Creator',
+    },
+    personal: {
+      ring: 'ring-4 ring-emerald-500/70 shadow-[0_0_0_6px_rgba(16,185,129,0.16)]',
+      badge: 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/50',
+      label: 'Personal',
+    },
+  };
+  const accountStyle = accountTypeUi[accountType] || accountTypeUi.personal;
 
   return (
     <div className="max-w-4xl mx-auto py-0 px-1 space-y-1">
@@ -209,7 +236,7 @@ export default function UserProfile() {
         <div className="px-5 pb-2 -mt-28">
           <div className="flex flex-col sm:flex-row items-start gap-5">
             {/* Avatar */}
-            <div className="w-24 h-24 rounded-full bg-surface-3 border-4 border-surface flex items-center justify-center text-3xl font-bold text-brand shrink-0 overflow-hidden">
+            <div className={`w-24 h-24 rounded-full bg-surface-3 border-4 border-surface ${accountStyle.ring} flex items-center justify-center text-3xl font-bold text-brand shrink-0 overflow-hidden`}>
               <img
                 src={avatarSrc}
                 alt={profile.username}
@@ -224,7 +251,12 @@ export default function UserProfile() {
             <div className="flex-1 pt-2 sm:pt-6">
               <div className="rounded-xl bg-black/30 p-3 backdrop-blur-[1px]">
               <div className="flex items-center justify-between gap-3">
-                <h1 className="text-2xl font-bold text-text truncate">{profile.username}</h1>
+                <div className="flex items-center gap-2 min-w-0">
+                  <h1 className="text-2xl font-bold text-text truncate">{profile.username}</h1>
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] ${accountStyle.badge}`}>
+                    {accountStyle.label}
+                  </span>
+                </div>
 
                 <div className="flex items-center gap-2 shrink-0">
                   <button
@@ -272,8 +304,8 @@ export default function UserProfile() {
                   )}
                 </div>
               </div>
-              <p className="text-text-muted mt-2 text-sm leading-relaxed max-w-xl">{profile.bio}</p>
-              <p className="text-text-muted text-xs mt-2 flex items-center gap-1">
+              <p style={{color: "white"}} className="text-text-muted mt-2 text-sm leading-relaxed max-w-xl">{profile.bio}</p>
+              <p style={{color: "white"}} className="text-text-muted text-xs mt-2 flex items-center gap-1">
                 <Calendar className="w-3 h-3" />
                 Joined {joinedDate}
               </p>

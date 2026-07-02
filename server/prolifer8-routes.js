@@ -427,6 +427,27 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
     return buildAbsoluteUrl(req, `${PROXY}/api/posts/${postId}/thumbnail`);
   };
 
+  const resolveProfileAssetUrl = (req, value) => {
+    const raw = String(value || '').trim();
+    if (!raw) return raw;
+    if (/^https?:\/\//i.test(raw)) return raw;
+    if (raw.startsWith('/uploads/')) return buildAbsoluteUrl(req, raw);
+
+    const objectKey = normalizeObjectKey(raw);
+    const resolved = toPublicUrl(objectKey);
+    return resolved || raw;
+  };
+
+  const resolvePromoAssetUrl = (value) => {
+    const raw = String(value || '').trim();
+    if (!raw) return raw;
+    if (/^https?:\/\//i.test(raw)) return raw;
+
+    const objectKey = normalizeObjectKey(raw);
+    const resolved = objectKey ? toPublicUrl(objectKey) : null;
+    return resolved || raw;
+  };
+
   const serializePost = (req, post) => {
     if (!post) return post;
     return {
@@ -553,7 +574,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       const [topCreators] = await pool.query(
         `SELECT id, username, profilePicture, bio, creatorRating, totalPostsCreated, totalCreditsEarned
          FROM userData
-         WHERE accountType = 'creator' AND totalPostsCreated > 0
+         WHERE accountPlan = 'creator' AND totalPostsCreated > 0
          ORDER BY creatorRating DESC LIMIT 4`
       );
 
@@ -581,7 +602,8 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       const hasTag = !!tag;
       const [rows] = await pool.query(
         `SELECT id, userId, username, submissionType, mediaType, title, description,
-                targetPostId, target_url, mediaUrl, ctaText, budgetUsd, assetPath, status,
+          targetPostId, target_url, mediaUrl, ctaText, budgetCredits, assetPath,
+          thumbnailImg, thumbnailImg AS thumbnailPath, status,
                 clicks, impressions, likes, neutrals, dislikes, tags,
                 created_at, updated_at
          FROM promoSubmissions
@@ -596,7 +618,18 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
         hasTag ? [`%${tag}%`, limit] : [limit]
       );
 
-      res.json({ sponsored: rows });
+      const sponsored = rows.map((row) => {
+        const resolvedThumbnail = resolvePromoAssetUrl(row.thumbnailImg || row.thumbnailPath || '');
+        return {
+          ...row,
+          assetPath: resolvePromoAssetUrl(row.assetPath),
+          mediaUrl: resolvePromoAssetUrl(row.mediaUrl),
+          thumbnailImg: resolvedThumbnail,
+          thumbnailPath: resolvedThumbnail,
+        };
+      });
+
+      res.json({ sponsored });
     } catch (err) {
       // If promoSubmissions does not exist yet, return an empty list instead of failing Explore.
       if (err && (err.code === 'ER_NO_SUCH_TABLE' || err.errno === 1146)) {
@@ -791,7 +824,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
 
       // Upgrade user to creator if needed using Knex increment
       await knex('userData')
-        .where({ id: userId, accountType: 'free' })
+        .where({ id: userId, accountPlan: 'free' })
         .increment('totalPostsCreated', 1);
 
       res.status(201).json({ id: postId, message: 'Post created' });
@@ -1284,7 +1317,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
 
       // Upgrade user to creator if needed
       await pool.query(
-        `UPDATE userData SET totalPostsCreated = totalPostsCreated + 1 WHERE id = ? AND accountType = 'free'`,
+        `UPDATE userData SET totalPostsCreated = totalPostsCreated + 1 WHERE id = ? AND accountPlan = 'free'`,
         [userId]
       );
 
@@ -2205,7 +2238,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       const q = (req.query.q || '').toString().trim();
       if (!q || q.length < 2) return res.json([]);
       const [rows] = await pool.query(
-        `SELECT id, username, profilePicture, bio, accountType,
+        `SELECT id, username, profilePicture, bio, accountPlan,
                 totalPostsCreated, totalCreditsEarned
          FROM userData
          WHERE username LIKE ? AND isBanned = 0
@@ -2228,7 +2261,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
     try {
       const identifier = String(req.params.id || '').trim();
       const [rows] = await pool.query(
-        `SELECT id, username, profilePicture, bio, accountType,
+        `SELECT id, username, profilePicture, bio, accountPlan, accountType,
                 totalPostsCreated, totalCreditsEarned, creatorRating, createdAt,
                 bannerUrl, bioVideoUrl, socialLinks,
                 (SELECT COUNT(*) FROM followers WHERE followeeId = userData.id) AS followerCount,
@@ -2237,7 +2270,10 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
         [identifier, identifier]
       );
       if (!rows.length) return res.status(404).json({ error: 'User not found' });
-      res.json(rows[0]);
+      const profile = rows[0];
+      profile.profilePicture = resolveProfileAssetUrl(req, profile.profilePicture);
+      profile.bannerUrl = resolveProfileAssetUrl(req, profile.bannerUrl);
+      res.json(profile);
     } catch (err) {
       console.error('GET /api/users/:id error:', err);
       res.status(500).json({ error: 'Failed to fetch profile' });
@@ -2459,7 +2495,7 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
 
       // User info
       const [[user]] = await pool.query(
-        'SELECT id, username, email, credits, profilePicture, accountType FROM userData WHERE id = ?',
+        'SELECT id, username, email, credits, profilePicture, accountPlan FROM userData WHERE id = ?',
         [userId]
       );
 
@@ -2992,11 +3028,11 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
   server.get(PROXY + '/api/history/earnings', authenticateToken, async (req, res) => {
     try {
       const [rows] = await pool.query(
-        `SELECT wt.id, wt.amount, wt.balanceAfter, wt.relatedPostId, wt.description, wt.created_at,
+        `SELECT wt.id, wt.amount, wt.balanceAfter, wt.relatedPostId AS relatedpostId, wt.description, wt.created_at,
                 d.title AS postTitle
          FROM walletTransactions wt
          LEFT JOIN posts d ON d.id = wt.relatedPostId
-         WHERE wt.userId = ? AND wt.type = 'creator_earning'
+         WHERE wt.userId = ? AND (wt.type = 'creator_earning' OR wt.type = 'tip') AND wt.amount > 0
          ORDER BY wt.created_at DESC
          LIMIT 200`,
         [req.user.id]
@@ -3011,6 +3047,40 @@ module.exports = function prolifer8Routes(server, pool, authenticateToken, PROXY
       res.status(500).json({ error: 'Failed to fetch earnings history' });
     }
   });
+
+   /**
+   * GET /api/history/contributions
+   * Returns the authenticated user's contributions.
+   */
+  server.get(PROXY + '/api/history/contributions', authenticateToken, async (req, res) => {
+    try {
+      const [rows] = await pool.query(
+        `SELECT wt.id,
+                wt.relatedPostId AS postId,
+                ABS(wt.amount) AS amount,
+                0 AS penaltyAmount,
+                0 AS isRefunded,
+                wt.created_at,
+                d.title AS postTitle,
+                COALESCE(d.status, 'completed') AS postStatus
+         FROM walletTransactions wt
+         LEFT JOIN posts d ON d.id = wt.relatedPostId
+         WHERE wt.userId = ? AND (wt.type = 'creator_earning' OR wt.type = 'tip') AND wt.amount < 0
+         ORDER BY wt.created_at DESC
+         LIMIT 200`,
+        [req.user.id]
+      );
+
+      // Calculate total contributions
+      const totalSpent = rows.reduce((sum, row) => sum + (row.amount || 0), 0);
+
+      res.json({ history: rows, total: rows.length, totalSpent });
+    } catch (err) {
+      console.error('GET /api/history/contributions error:', err);
+      res.status(500).json({ error: 'Failed to fetch contributions history' });
+    }
+  });
+
 
   /**
    * GET /api/history/promo-charges

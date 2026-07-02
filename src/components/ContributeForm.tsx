@@ -12,13 +12,13 @@ interface ContributeResponse {
 }
 
 interface Props {
-  dropId: string;
+  postId: string;
   onContributed?: () => void;
 }
 
 const PRESETS = [1_000, 5_000, 10_000, 25_000];
 
-export default function ContributeForm({ dropId, onContributed }: Props) {
+export default function ContributeForm({ postId, onContributed }: Props) {
   const { contribute } = useApp();
   const { user, updateBalance } = useAuth();
   const [amount, setAmount] = useState(1_000);
@@ -35,9 +35,9 @@ export default function ContributeForm({ dropId, onContributed }: Props) {
     setSubmitting(true);
 
     try {
-      const res = await api.post<ContributeResponse>(`/api/posts/${dropId}/contribute`, { amount });
+      const res = await api.post<ContributeResponse>(`/api/posts/${postId}/contribute`, { amount });
       // Update local state as well for instant UI feedback
-      contribute(dropId, amount);
+      contribute(postId, amount);
       // Sync credit balance directly from contribution response
       updateBalance(res.newBalance);
       setSubmitted(true);

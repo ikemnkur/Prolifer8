@@ -366,7 +366,7 @@ module.exports = function createAdminRouter(deps = {}) {
     message = '',
     priority = 'info',
     category = 'system',
-    relatedDropId = null,
+    relatedpostId = null,
     actionUrl = null,
   }) {
     if (!userId || !title) return;
@@ -404,9 +404,9 @@ module.exports = function createAdminRouter(deps = {}) {
 
     if (poolRef?.query) {
       await poolRef.query(
-        `INSERT IGNORE INTO notifications (id, userId, type, title, message, priority, category, relatedDropId, actionUrl, isRead, createdAt)
+        `INSERT IGNORE INTO notifications (id, userId, type, title, message, priority, category, relatedpostId, actionUrl, isRead, createdAt)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-        [id, userId, type || 'admin_message', title, message, safePriority, safeCategory, relatedDropId, actionUrl, createdAt]
+        [id, userId, type || 'admin_message', title, message, safePriority, safeCategory, relatedpostId, actionUrl, createdAt]
       );
       return;
     }
@@ -419,7 +419,7 @@ module.exports = function createAdminRouter(deps = {}) {
       message,
       priority: safePriority,
       category: safeCategory,
-      relatedDropId,
+      relatedpostId,
       actionUrl,
       isRead: 0,
       createdAt,
@@ -527,7 +527,7 @@ module.exports = function createAdminRouter(deps = {}) {
         targetPostId VARCHAR(255) DEFAULT NULL,
         mediaUrl TEXT,
         ctaText VARCHAR(255) DEFAULT NULL,
-        budgetUsd DECIMAL(10,2) DEFAULT 0,
+        budgetCredits DECIMAL(10,2) DEFAULT 0,
         assetPath VARCHAR(255) DEFAULT NULL,
         status VARCHAR(40) NOT NULL DEFAULT 'pending',
         adminNotes TEXT,
@@ -1887,7 +1887,7 @@ module.exports = function createAdminRouter(deps = {}) {
           'phoneNumber',
           'birthDate',
           'credits',
-          'accountType',
+          'accountPlan',
           'createdAt',
           'updatedAt',
           'verification',
@@ -1984,7 +1984,7 @@ module.exports = function createAdminRouter(deps = {}) {
                   <h3>Account</h3>
                   <table>
                     <tr><td>User ID</td><td>${escapeHtml(String(row.id || '—'))}</td></tr>
-                    <tr><td>Plan</td><td>${escapeHtml(String(row.accountType || 'free'))}</td></tr>
+                    <tr><td>Plan</td><td>${escapeHtml(String(row.accountPlan || 'free'))}</td></tr>
                     <tr><td>Credits</td><td>${Number(row.credits || 0).toLocaleString()}</td></tr>
                     <tr><td>Joined</td><td>${escapeHtml(fmtDate(row.createdAt))}</td></tr>
                     <tr><td>Updated</td><td>${escapeHtml(fmtDate(row.updatedAt))}</td></tr>
@@ -2182,7 +2182,7 @@ module.exports = function createAdminRouter(deps = {}) {
         <td>${escapeHtml(String(row.mediaType || '—'))}</td>
         <td>${previewCell(row)}</td>
         <td>${escapeHtml(String(row.targetPostId || '—'))}</td>
-        <td>$${Number(row.budgetUsd || 0).toFixed(2)}</td>
+        <td>$${Number(row.budgetCredits || 0).toFixed(2)}</td>
         <td>${statusChip(row.status)}</td>
         <td style="font-size:0.82em;color:var(--text2);">${fmtDate(row.created_at)}</td>
         <td>

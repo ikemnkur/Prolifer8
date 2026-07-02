@@ -4,7 +4,7 @@ import XIcon from '@mui/icons-material/X';
 import FacebookIcon from '@mui/icons-material/Facebook';
 
 interface Props {
-  dropTitle: string;
+  postTitle: string;
   dropUrl: string;
   onClose: () => void;
 }
@@ -40,7 +40,7 @@ const SHARE_CHANNELS = [
   },
 ];
 
-export default function ShareModal({ dropTitle, dropUrl, onClose }: Props) {
+export default function ShareModal({ postTitle, dropUrl, onClose }: Props) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -85,7 +85,7 @@ export default function ShareModal({ dropTitle, dropUrl, onClose }: Props) {
 
           {/* Drop title preview */}
           <p className="text-sm text-text-muted">
-            Share <span className="font-semibold text-text">"{dropTitle}"</span> with others.
+            Share <span className="font-semibold text-text">"{postTitle}"</span> with others.
           </p>
 
           {/* Copy link row */}
@@ -119,7 +119,7 @@ export default function ShareModal({ dropTitle, dropUrl, onClose }: Props) {
             {SHARE_CHANNELS.map(({ label, icon: Icon, color, href }) => (
               <a
                 key={label}
-                href={href(dropUrl, dropTitle)}
+                href={href(dropUrl, postTitle)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className={[

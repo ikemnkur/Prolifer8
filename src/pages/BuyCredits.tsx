@@ -76,7 +76,7 @@ export default function BuyCredits() {
       )}
 
       {/* Mode toggle */}
-      <div className="flex bg-surface-2 rounded-xl p-1 mb-6">
+      {/* <div className="flex bg-surface-2 rounded-xl p-1 mb-6">
         <button
           onClick={() => setMode('buy')}
           className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
@@ -95,7 +95,7 @@ export default function BuyCredits() {
           <ArrowDownToLine className="w-4 h-4" />
           Redeem
         </button>
-      </div>
+      </div> */}
 
       {mode === 'buy' ? (
         <>

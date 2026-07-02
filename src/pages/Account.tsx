@@ -21,7 +21,7 @@ export default function Account() {
   const isVerified = user.verification === 'true';
   const avatarFallback = `https://picsum.photos/seed/user-account-${user.id}/240/240`;
 
-  const membership = (user.accountType ?? 'free').toLowerCase() as 'free' | 'standard' | 'premium';
+  const membership = (user.accountPlan ?? 'free').toLowerCase() as 'free' | 'standard' | 'premium';
 
   const membershipMeta = {
     free:     { label: 'Free',     Icon: Zap,    color: 'text-text-muted',  desc: 'Upgrade for more credits and premium features' },

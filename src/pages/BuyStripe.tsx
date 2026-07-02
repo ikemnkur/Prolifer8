@@ -23,11 +23,11 @@ const PACK_CONFIG = [
 // };
 
 const STRIPE_IDS: Record<number, string> = {
-  5_000:   'dRmeVeekngJ59WPfz89AA01',
-  10_000:  '00wfZi2BF2Sf3yr4Uu9AA02',
-  25_000:  'cNi28s4JN1Ob8SLbiS9AA06',
-  50_000:  'fZu00k6RV64r8SL3Qq9AA03',
-  100_000: '5kQ9AU5NRdwT4CvbiS9AA04',
+  5_000:   '3cIfZi4JN2Sf4Cvdr09AA07',
+  10_000:  '5kQ8wQ0tx1Obb0T5Yy9AA08',
+  25_000:  '4gM7sM0tx1Ob7OH2Mm9AA09',
+  50_000:  'dRm00kekn78vc4X72C9AA0a',
+  100_000: '4gMdRagsv2Sf1qj2Mm9AA0b',
 };
 
 export default function BuyStripe() {

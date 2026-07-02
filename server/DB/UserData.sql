@@ -33,7 +33,7 @@ CREATE TABLE
     `recoveryCodes` json DEFAULT NULL,
 
     -- Prolifer8 account tiers: free users can contribute, creators can host drops, premium gets priority
-    `accountType` enum('free', 'creator', 'premium') DEFAULT 'free',
+    `accountPlan` enum('free', 'creator', 'premium') DEFAULT 'free',
     `planExpiry` timestamp NULL DEFAULT NULL,
 
     -- Creator-specific fields
@@ -67,6 +67,6 @@ CREATE TABLE
     PRIMARY KEY (`id`),
     UNIQUE KEY `username` (`username`),
     UNIQUE KEY `email` (`email`),
-    KEY `idx_accountType` (`accountType`),
+    KEY `idx_accountPlan` (`accountPlan`),
     KEY `idx_verification` (`verification`)
   ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci

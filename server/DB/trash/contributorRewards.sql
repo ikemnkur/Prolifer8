@@ -3,7 +3,7 @@
 
 CREATE TABLE `contributorRewards` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
-  `dropId` varchar(36) NOT NULL,
+  `postId` varchar(36) NOT NULL,
   `userId` varchar(10) NOT NULL,
 
   `tier` enum('bronze','silver','gold','diamond') NOT NULL,
@@ -21,10 +21,10 @@ CREATE TABLE `contributorRewards` (
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
   PRIMARY KEY (`id`),
-  UNIQUE KEY `unique_user_drop_reward` (`dropId`, `userId`),
-  KEY `idx_dropId` (`dropId`),
+  UNIQUE KEY `unique_user_drop_reward` (`postId`, `userId`),
+  KEY `idx_postId` (`postId`),
   KEY `idx_userId` (`userId`),
   KEY `idx_tier` (`tier`),
-  CONSTRAINT `fk_rewards_drop` FOREIGN KEY (`dropId`) REFERENCES `drops` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_rewards_drop` FOREIGN KEY (`postId`) REFERENCES `drops` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_rewards_user` FOREIGN KEY (`userId`) REFERENCES `userData` (`id`) ON DELETE CASCADE
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci;

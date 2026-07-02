@@ -283,7 +283,7 @@ Primary user table with auth, profile, moderation, and verification fields.
 | `username`, `email`      | varchar      | Unique                               |
 | `passwordHash`           | varchar(255) | bcrypt                               |
 | `credits`                | int          | Current balance                      |
-| `accountType`            | enum         | free / creator / premium             |
+| `accountPlan`            | enum         | free / creator / premium             |
 | `verification`           | varchar(10)  | none / false / pending / true        |
 | `amount1`, `amount2`     | double       | Crypto verification amounts (USD)    |
 | `cryptoAmounts`          | varchar(255) | JSON: per-chain equivalents          |

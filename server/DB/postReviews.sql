@@ -3,7 +3,7 @@
 
 CREATE TABLE `postReviews` (
   `id` varchar(36) NOT NULL COMMENT 'UUID',
-  `dropId` varchar(36) NOT NULL,
+  `postId` varchar(36) NOT NULL,
   `userId` varchar(10) NOT NULL,
   `comment` text NOT NULL,
   `liked` tinyint(1) DEFAULT NULL COMMENT '1=like, 0=dislike, NULL=no vote',
@@ -14,8 +14,8 @@ CREATE TABLE `postReviews` (
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `unique_user_drop_review` (`dropId`, `userId`) COMMENT 'One review per user per drop',
-  KEY `idx_dropId` (`dropId`),
+  UNIQUE KEY `unique_user_drop_review` (`postId`, `userId`) COMMENT 'One review per user per drop',
+  KEY `idx_postId` (`postId`),
   KEY `idx_userId` (`userId`),
   KEY `idx_qrating` (`rating`),
   KEY `idx_erating` (`effortRating`)

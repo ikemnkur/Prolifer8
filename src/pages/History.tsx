@@ -124,7 +124,7 @@ export default function History() {
       const s = e.isRefunded ? 'refunded' : 'completed';
       if (s !== statusFilter) return false;
     }
-    return !q || e.dropTitle.toLowerCase().includes(q);
+    return !q || e.postTitle.toLowerCase().includes(q);
   }), [contrib.entries, cutoff, q, statusFilter]);
 
   const filteredPurchases = useMemo(() => purchases.entries.filter(e => {
@@ -136,7 +136,7 @@ export default function History() {
   const filteredDownloads = useMemo(() => downloads.entries.filter(e => {
     if (e.timestamp < cutoff) return false;
     if (statusFilter !== 'all' && 'completed' !== statusFilter) return false;
-    return !q || e.dropTitle.toLowerCase().includes(q);
+    return !q || e.postTitle.toLowerCase().includes(q);
   }), [downloads.entries, cutoff, q, statusFilter]);
 
   const filteredMemberships = useMemo(() => memberships.entries.filter(e => {
@@ -148,7 +148,7 @@ export default function History() {
   const filteredEarnings = useMemo(() => earnings.entries.filter(e => {
     if (e.timestamp < cutoff) return false;
     if (statusFilter !== 'all' && 'completed' !== statusFilter) return false;
-    return !q || (e.dropTitle ?? '').toLowerCase().includes(q);
+    return !q || (e.postTitle ?? '').toLowerCase().includes(q);
   }), [earnings.entries, cutoff, q, statusFilter]);
 
   const filteredPromoCharges = useMemo(() => promoCharges.entries.filter(e => {
@@ -162,7 +162,7 @@ export default function History() {
     if (tab === 'contributions') {
       downloadCSV(
         ['Date', 'Time', 'Drop', 'Amount', 'Penalty', 'Status'],
-        filteredContribs.map(e => [fmtDate(e.timestamp), fmtTime(e.timestamp), e.dropTitle, e.amount, e.penaltyAmount, e.isRefunded ? 'Refunded' : 'Completed']),
+        filteredContribs.map(e => [fmtDate(e.timestamp), fmtTime(e.timestamp), e.postTitle, e.amount, e.penaltyAmount, e.isRefunded ? 'Refunded' : 'Completed']),
         'contributions.csv',
       );
     } else if (tab === 'purchases') {
@@ -171,16 +171,16 @@ export default function History() {
         filteredPurchases.map(e => [fmtDate(e.timestamp), fmtTime(e.timestamp), e.credits, e.amountPaid, e.currency, e.paymentMethod, e.status, e.txHash ?? '']),
         'credit-purchases.csv',
       );
-    } else if (tab === 'downloads') {
-      downloadCSV(
-        ['Date', 'Time', 'Drop', 'Price Paid', 'Base Price', 'Contributor Disc.', 'Time Dec. Disc.', 'Volume Dec. Disc.', 'Download #'],
-        filteredDownloads.map(e => [fmtDate(e.timestamp), fmtTime(e.timestamp), e.dropTitle, e.pricePaid, e.basePrice, `${e.contributorDiscount}%`, `${e.timeDecayDiscount}%`, `${e.volumeDecayDiscount}%`, e.downloadNumber]),
-        'downloads.csv',
-      );
+    // } else if (tab === 'downloads') {
+    //   downloadCSV(
+    //     ['Date', 'Time', 'Drop', 'Price Paid', 'Base Price', 'Contributor Disc.', 'Time Dec. Disc.', 'Volume Dec. Disc.', 'Download #'],
+    //     filteredDownloads.map(e => [fmtDate(e.timestamp), fmtTime(e.timestamp), e.postTitle, e.pricePaid, e.basePrice, `${e.contributorDiscount}%`, `${e.timeDecayDiscount}%`, `${e.volumeDecayDiscount}%`, e.downloadNumber]),
+    //     'downloads.csv',
+    //   );
     } else if (tab === 'earnings') {
       downloadCSV(
         ['Date', 'Time', 'Drop', 'Amount Earned', 'Balance After', 'Description'],
-        filteredEarnings.map(e => [fmtDate(e.timestamp), fmtTime(e.timestamp), e.dropTitle ?? 'Unknown', e.amount, e.balanceAfter, e.description ?? '']),
+        filteredEarnings.map(e => [fmtDate(e.timestamp), fmtTime(e.timestamp), e.postTitle ?? 'Unknown', e.amount, e.balanceAfter, e.description ?? '']),
         'creator-earnings.csv',
       );
     } else if (tab === 'promo') {
@@ -201,7 +201,7 @@ export default function History() {
   async function exportPDF() {
     if (tab === 'contributions') {
       await downloadPDF('Contribution History', ['Date', 'Time', 'Drop', 'Amount', 'Penalty', 'Status'],
-        filteredContribs.map(e => [fmtDate(e.timestamp), fmtTime(e.timestamp), e.dropTitle, e.amount, e.penaltyAmount, e.isRefunded ? 'Refunded' : 'Completed']),
+        filteredContribs.map(e => [fmtDate(e.timestamp), fmtTime(e.timestamp), e.postTitle, e.amount, e.penaltyAmount, e.isRefunded ? 'Refunded' : 'Completed']),
         'contributions.pdf');
     } else if (tab === 'purchases') {
       await downloadPDF('Credit Purchase History', ['Date', 'Time', 'Credits', 'Amount Paid', 'Currency', 'Method', 'Status', 'TX Hash'],
@@ -209,11 +209,11 @@ export default function History() {
         'credit-purchases.pdf');
     } else if (tab === 'downloads') {
       await downloadPDF('Download History', ['Date', 'Time', 'Drop', 'Price Paid', 'Base Price', 'Contrib Disc', 'Time Disc', 'Vol Disc', 'DL #'],
-        filteredDownloads.map(e => [fmtDate(e.timestamp), fmtTime(e.timestamp), e.dropTitle, e.pricePaid, e.basePrice, `${e.contributorDiscount}%`, `${e.timeDecayDiscount}%`, `${e.volumeDecayDiscount}%`, e.downloadNumber]),
+        filteredDownloads.map(e => [fmtDate(e.timestamp), fmtTime(e.timestamp), e.postTitle, e.pricePaid, e.basePrice, `${e.contributorDiscount}%`, `${e.timeDecayDiscount}%`, `${e.volumeDecayDiscount}%`, e.downloadNumber]),
         'downloads.pdf');
     } else if (tab === 'earnings') {
       await downloadPDF('Creator Earnings History', ['Date', 'Time', 'Drop', 'Amount Earned', 'Balance After', 'Description'],
-        filteredEarnings.map(e => [fmtDate(e.timestamp), fmtTime(e.timestamp), e.dropTitle ?? 'Unknown', e.amount, e.balanceAfter, e.description ?? '']),
+        filteredEarnings.map(e => [fmtDate(e.timestamp), fmtTime(e.timestamp), e.postTitle ?? 'Unknown', e.amount, e.balanceAfter, e.description ?? '']),
         'creator-earnings.pdf');
     } else if (tab === 'promo') {
       await downloadPDF('Promo Charges History', ['Date', 'Time', 'Charge', 'Balance After', 'Description'],
@@ -229,18 +229,18 @@ export default function History() {
   // ── Summary bar ────────────────────────────────────
   const totalCreditsBought = purchases.entries.filter(e => e.status === 'completed').reduce((s, e) => s + e.credits, 0);
   const totalSpentDownloads = downloads.entries.reduce((s, e) => s + e.pricePaid, 0);
-  const totalSpentContribs = contrib.totalSpent;
+  const totalContributed = contrib.totalContributed;
   const totalEarnings = earnings.totalEarned;
   const totalPromoCharges = promoCharges.totalCharged;
 
   // ── Tab config ─────────────────────────────────────
   const tabs: { id: Tab; label: string; icon: React.ReactNode; count: number }[] = [
     { id: 'contributions', label: 'Contributions', icon: <Flame className="w-4 h-4" />, count: mergedContribs.length },
-    { id: 'purchases', label: 'Credit Purchases', icon: <CreditCard className="w-4 h-4" />, count: purchases.entries.length },
-    { id: 'downloads', label: 'Downloads', icon: <Download className="w-4 h-4" />, count: downloads.entries.length },
+    // { id: 'downloads', label: 'Downloads', icon: <Download className="w-4 h-4" />, count: downloads.entries.length },
     { id: 'earnings', label: 'Earnings', icon: <ArrowUpRight className="w-4 h-4" />, count: earnings.entries.length },
     { id: 'promo', label: 'Promo Charges', icon: <Megaphone className="w-4 h-4" />, count: promoCharges.entries.length },
     { id: 'membership', label: 'Membership', icon: <Crown className="w-4 h-4" />, count: memberships.entries.length },
+    { id: 'purchases', label: 'Credit Purchases', icon: <CreditCard className="w-4 h-4" />, count: purchases.entries.length },
   ];
 
   return (
@@ -269,15 +269,15 @@ export default function History() {
       </div>
 
       {/* Summary bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <div className="bg-surface-2 rounded-xl p-3">
           <p className="text-xs text-text-muted mb-1">Credits spent (contributions)</p>
-          <p className="text-lg font-bold text-brand">{totalSpentContribs.toLocaleString()}</p>
+          <p className="text-lg font-bold text-brand">{totalContributed.toLocaleString()}</p>
         </div>
-        <div className="bg-surface-2 rounded-xl p-3">
+        {/* <div className="bg-surface-2 rounded-xl p-3">
           <p className="text-xs text-text-muted mb-1">Credits spent (downloads)</p>
           <p className="text-lg font-bold text-brand">{totalSpentDownloads.toLocaleString()}</p>
-        </div>
+        </div> */}
         <div className="bg-surface-2 rounded-xl p-3">
           <p className="text-xs text-text-muted mb-1">Credits earned</p>
           <p className="text-lg font-bold text-green-400">{totalEarnings.toLocaleString()}</p>
@@ -329,7 +329,7 @@ export default function History() {
             placeholder={
               tab === 'contributions' ? 'Search by drop title…' :
               tab === 'purchases' ? 'Search by method or TX hash…' :
-              tab === 'downloads' ? 'Search by drop title…' :
+              // tab === 'downloads' ? 'Search by drop title…' :
               tab === 'earnings' ? 'Search by drop title…' :
               tab === 'promo' ? 'Search by charge description…' :
               'Search by plan…'
@@ -385,7 +385,7 @@ export default function History() {
               {filteredContribs.map(h => (
                 <Link
                   key={h.id}
-                  to={`/post/${h.dropId}`}
+                  to={`/post/${h.postId}`}
                   className="bg-surface-2 rounded-xl p-4 flex items-center gap-4 hover:bg-surface-3 transition-colors block no-underline"
                 >
                   <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
@@ -400,7 +400,7 @@ export default function History() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-semibold text-text truncate">{h.dropTitle}</p>
+                      <p className="text-sm font-semibold text-text truncate">{h.postTitle}</p>
                       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
                         h.kind === 'stall'
                           ? 'bg-yellow-500/15 text-yellow-400'
@@ -456,7 +456,7 @@ export default function History() {
           )}
 
           {/* Downloads tab */}
-          {tab === 'downloads' && (
+          {/* {tab === 'downloads' && (
             filteredDownloads.length === 0 ? <EmptyState icon={<Download className="w-8 h-8 text-text-muted" />} label="No downloads found." /> :
             <div className="space-y-2">
               {filteredDownloads.map(d => {
@@ -464,14 +464,14 @@ export default function History() {
                 return (
                   <Link
                     key={d.id}
-                    to={`/post/${d.dropId}`}
+                    to={`/post/${d.postId}`}
                     className="bg-surface-2 rounded-xl p-4 flex items-center gap-4 hover:bg-surface-3 transition-colors block no-underline"
                   >
                     <div className="w-9 h-9 bg-surface-3 rounded-lg flex items-center justify-center shrink-0">
                       <Download className="w-4 h-4 text-brand" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-text truncate">{d.dropTitle}</p>
+                      <p className="text-sm font-semibold text-text truncate">{d.postTitle}</p>
                       <p className="text-xs text-text-muted">{fmtDate(d.timestamp)} · {fmtTime(d.timestamp)} · Download #{d.downloadNumber}</p>
                       {totalDisc > 0 && (
                         <p className="text-xs text-green-400 mt-0.5">
@@ -492,7 +492,7 @@ export default function History() {
                 );
               })}
             </div>
-          )}
+          )} */}
 
           {/* Earnings tab */}
           {tab === 'earnings' && (
@@ -504,7 +504,7 @@ export default function History() {
                     <ArrowUpRight className="w-4 h-4 text-green-400" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-text truncate">{e.dropTitle}</p>
+                    <p className="text-sm font-semibold text-text truncate">{e.postTitle}</p>
                     <p className="text-xs text-text-muted">{fmtDate(e.timestamp)} · {fmtTime(e.timestamp)}</p>
                     {e.description && (
                       <p className="text-xs text-text-muted mt-0.5">{e.description}</p>
